@@ -1,0 +1,73 @@
+SCANNER CAMPO 0.1 — app Android próprio para o scanner GeoSun (GS-102G)
+=====================================================================
+Feito a partir da leitura do FireEye 3.2.0 (protocolo do scanner). Não usa nem altera o app da GeoSun.
+
+INSTALAR NO CELULAR
+  1. Mande o arquivo ScannerCampo-0.6.apk para o celular (cabo USB, Drive, WhatsApp).
+  2. Abra o arquivo no celular. O Android pede para permitir "instalar apps desconhecidos" para o app que
+     abriu o arquivo (Arquivos, Chrome, WhatsApp…): permita e instale.
+  3. O FireEye e o Scanner Campo NÃO devem ficar conectados ao scanner ao mesmo tempo: feche o FireEye antes.
+
+USAR
+  - Ligue o scanner e espere ele iniciar. No celular, deixe o Wi-Fi e a LOCALIZAÇÃO ligados (o Android só deixa o
+    app listar redes Wi-Fi com a Localização ligada) e os DADOS MÓVEIS ligados (é por eles que vai o RTK).
+  - Aba "Levantamento" > cartão "Scanner" > CONECTAR AO SCANNER (como no FireEye):
+      1. na primeira vez o app pede a permissão de localização: conceda;
+      2. o app procura as redes Wi-Fi cujo nome começa com AGS (a rede do scanner, ex.: AGS326046265; é aberta);
+      3. achando uma, conecta nela; o Android pode abrir uma janela "Conectar à rede AGS…": toque em Conectar;
+         achando várias, você escolhe; não achando, o app avisa (scanner desligado ou longe) e o botão vira
+         "Buscar de novo";
+      4. conectada a rede, o app abre a conexão com o scanner (192.168.2.11:8080) e a etiqueta fica verde.
+    Se você já conectou no Wi-Fi do scanner pelas configurações do Android, o app percebe e usa essa rede.
+    "Desconectar do scanner" solta o Wi-Fi. O FireEye e o Scanner Campo não devem ficar conectados juntos.
+  - No topo, sempre visíveis em qualquer aba:
+      * a faixa do SLAM: normal, ATENÇÃO (pode se perder) ou PERDIDO, com apito e vibração; toque nela para
+        silenciar por 1 minuto;
+      * etiquetas do scanner, do GNSS (fixo, flutuante…) e do RTK.
+  - Aba "Levantamento": números do SLAM (velocidade, pontos, quadros/s, distância), caminho percorrido, nome do
+    projeto, Iniciar/Parar e Gravar ponto de controle.
+  - Aba "RTK": endereço e porta do caster (usuário/senha só se o caster pedir; "Mostrar" revela a senha) →
+    "Obter mountpoints" → escolha na lista → "Conectar". Os dados ficam salvos.
+  - Teclado: o campo em que você digita sobe para o alto da tela, com o rótulo à vista, e as abas somem enquanto o
+    teclado está aberto. "Ok/Concluir" do teclado fecha o teclado.
+
+TELA (sempre à vista, em qualquer aba)
+  - Faixa do SLAM (normal / atenção / perdido, com apito e vibração; toque para silenciar 1 min).
+  - Seis quadros de estado: SCANNER (conexão e preparo), BATERIA (% e volts), MEMÓRIA (GB livres ou "Sem cartão"),
+    GNSS (tipo de solução, satélites, HDOP, idade da correção), RTK (caster NTRIP: recebendo/erro e idade do último
+    dado) e PRECISÃO (a do RTK).
+  - Barra fixa no rodapé: tempo do levantamento e distância andada, INICIAR/PARAR e PONTO DE CONTROLE.
+  - Com o teclado aberto, a grade e a barra somem para sobrar espaço aos campos.
+  PRECISÃO: se o receptor do scanner mandar a sentença GST, o app mostra a precisão MEDIDA (± cm). Se não mandar, mostra a
+  faixa TÍPICA do tipo de solução e avisa "estimada": RTK fixo ≈ 2 cm, flutuante ≈ 20–50 cm, DGPS ≈ 0,5–1 m,
+  autônomo ≈ 2–5 m. O diagnostico_scanner.txt mostra se o GST chega.
+  TEMPERATURA: o scanner não manda temperatura em nenhuma mensagem que o FireEye usa, nem nos registros do motor ou
+  nos pacotes do lidar; por isso não há mostrador.
+
+ANTES DE INICIAR (como no FireEye)
+  Recém-ligado, o scanner leva alguns minutos. Antes de iniciar o app espera: CARTÃO DE MEMÓRIA presente, parâmetros,
+  calibração do lidar, sistema principal e bateria (linha "Antes de iniciar" no cartão Scanner). A checagem do LIDAR e
+  das CÂMERAS só vale depois de iniciar (linha de baixo). Se algo faltar, o app lista e pergunta se quer aguardar ou
+  iniciar mesmo assim. Sem cartão de memória o scanner não inicia: o app avisa "CARTÃO DE MEMÓRIA ausente".
+  Depois de iniciar, a faixa do topo mostra a etapa: comando enviado → scanner confirmou → iniciando o SLAM (fique
+  parado) → quadros chegando, e avisa se o scanner não confirmou em 8 s.
+
+DIAGNÓSTICO (quando algo não aparece, ex.: o GNSS)
+  O app grava, a cada 10 s, o arquivo diagnostico_scanner.txt em
+  Android/data/br.scanner.campo/files/logs_slam/ : tipos de mensagem que o scanner mandou, quantas, tamanhos e os
+  primeiros bytes, mais as últimas linhas GGA recebidas e se foram lidas. Mande esse arquivo junto com o CSV do SLAM.
+
+O QUE AINDA É PROVISÓRIO
+  - Os limites do alarme (2,5 m/s atenção, 5 m/s perdido, poucos pontos < 35%, 2,5 s / 6 s sem quadro) são
+    estimativas. Cada levantamento grava um CSV com todos os quadros em
+    Android/data/br.scanner.campo/files/logs_slam/ — mande esses arquivos (principalmente de um levantamento em
+    que o SLAM se perdeu) para calibrar.
+  - O "código de estado" de cada quadro (que o FireEye ignora) ainda não tem significado conhecido; o app avisa
+    quando ele muda e grava no CSV.
+  - Não há a nuvem 3D: só a vista de cima com o caminho e os pontos do quadro atual.
+  - Parâmetros de amostragem fixos nos padrões do 102G no FireEye (0,5 / 10 / 0,2 m / 0,5 m / quadro-chave 1).
+
+COMPILAR DE NOVO (depois de mudar o código)
+  Dê dois cliques em compilar.bat. Usa o Java 17, o SDK do Android e o Gradle de ..\android (instalação
+  mínima, sem o Android Studio). Os testes automáticos (protocolo, GGA, alarme do SLAM e NTRIP contra um caster
+  simulado) rodam antes de gerar o APK.

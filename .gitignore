@@ -1,0 +1,14 @@
+# gerados e locais
+.gradle/
+.kotlin/
+build/
+app/build/
+local.properties
+*.apk
+*.aab
+*.keystore
+*.jks
+# dados de levantamento nunca vão para o repositório
+logs_slam/
+*.csv
+diagnostico_scanner.txt
