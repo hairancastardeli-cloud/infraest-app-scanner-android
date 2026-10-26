@@ -20,8 +20,8 @@ levantamento e grava ponto de controle. Cada levantamento grava um CSV com todos
 - Testes em `app/src/test` (protocolo, GGA, alarme do SLAM, NTRIP contra caster simulado).
 
 ## Compilar
-`compilar.bat` (duplo clique) usa o JDK 17, o SDK do Android e o Gradle 8.11.1 instalados em `..\android` (instalação mínima, sem o Android
-Studio), roda os testes e gera `ScannerCampo-<versão>.apk` na pasta. Crie o `local.properties` com `sdk.dir=<caminho do SDK>`.
+`compilar.bat` (duplo clique) usa o JDK 17, o SDK do Android e o Gradle 8.11.1 de `C:\SCANNER\_ferramentas\android` (instalação mínima, sem o
+Android Studio; em outro lugar, defina `ANDROID_TOOLS`), cria o `local.properties`, roda os testes e gera `ScannerCampo-<versão>.apk` na pasta.
 
 ## Fora do repositório
 APKs, `local.properties`, saídas do Gradle, CSVs e diagnósticos de levantamento (dados de campo).
