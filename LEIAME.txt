@@ -1,4 +1,4 @@
-SCANNER CAMPO 0.1 — app Android próprio para o scanner GeoSun (GS-102G)
+SCANNER CAMPO 0.6 — app Android próprio para o scanner GeoSun (GS-102G)
 =====================================================================
 Feito a partir da leitura do FireEye 3.2.0 (protocolo do scanner). Não usa nem altera o app da GeoSun.
 

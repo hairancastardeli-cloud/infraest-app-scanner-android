@@ -31,8 +31,8 @@ object Protocolo {
         CHECAGEM_SISTEMA(cmd(0x11, 0x00, 0x00, 0x30)),
         PARAMETROS(cmd(0x11, 0x00, 0x00, 0x08)),
         GNSS(cmd(0x11, 0x00, 0x00, 0x04)),
-        ESTACAO_BASE(cmd(0x11, 0x00, 0x00, 0x05)),
-        CALIBRACAO_CSV(cmd(0x11, 0x00, 0x00, 0x07)),    // calibração do lidar (HesaiCalibration.csv), enviada ao conectar      // no FireEye (BASE_STATION) é a linha NMEA GGA do receptor do scanner
+        ESTACAO_BASE(cmd(0x11, 0x00, 0x00, 0x05)),     // no FireEye (BASE_STATION) é a linha NMEA GGA do receptor do scanner
+        CALIBRACAO_CSV(cmd(0x11, 0x00, 0x00, 0x07)),    // calibração do lidar (HesaiCalibration.csv), enviada ao conectar
         IMU(cmd(0x11, 0x00, 0x00, 0x02)),
         LIDAR(cmd(0x11, 0x00, 0x00, 0x01)),
         MOTOR(cmd(0x11, 0x00, 0x00, 0x03)),
