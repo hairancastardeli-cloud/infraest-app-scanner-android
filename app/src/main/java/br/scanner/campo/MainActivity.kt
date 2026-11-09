@@ -88,6 +88,10 @@ class MainActivity : Activity() {
     private lateinit var abaRtk: ScrollView
     private lateinit var btAbaLev: Button
     private lateinit var btAbaRtk: Button
+    private lateinit var abaNuvem: ScrollView
+    private lateinit var btAbaNuvem: Button
+    private lateinit var listaNuvens: LinearLayout
+    private var nuvemGravadaMs = 0L
     private lateinit var barraAbas: LinearLayout
 
     // levantamento
@@ -262,7 +266,7 @@ class MainActivity : Activity() {
     }
 
     override fun onBackPressed() {
-        if (abaRtk.visibility == View.VISIBLE) mostrarAba(false) else super.onBackPressed()
+        if (abaRtk.visibility == View.VISIBLE || abaNuvem.visibility == View.VISIBLE) mostrarAba(false) else super.onBackPressed()
     }
 
     // ------------------------------------------------------------------ mensagens do scanner
@@ -297,6 +301,7 @@ class MainActivity : Activity() {
             Protocolo.Tipo.NUVEM -> {
                 val q = Protocolo.lerNuvem(m.dados) ?: return
                 val s = monitor.quadro(q)
+                NuvemAtual.nuvem.adicionar(q)
                 vista.adicionar(q, when (s.nivel) { MonitorSlam.Nivel.PERDIDO -> 2; MonitorSlam.Nivel.ATENCAO -> 1; else -> 0 })
                 ui.post { mostrarSlam(s) }
             }
@@ -350,6 +355,7 @@ class MainActivity : Activity() {
         equip.enviar(Protocolo.INICIAR, Protocolo.dadosIniciar("Campo", nomeParte))
         ui.postDelayed({ equip.enviar(Protocolo.PARAMETROS_AMOSTRA, Protocolo.dadosAmostragem()) }, 500)
         monitor.comecar(nomeParte); vista.limpar()
+        NuvemAtual.nuvem.limpar(); NuvemAtual.nome = nomeParte; nuvemGravadaMs = System.currentTimeMillis()
         levantando = true; pausado = false
         atualizarBotoes(); atualizarPreparo()
         esconderTeclado()
@@ -371,6 +377,7 @@ class MainActivity : Activity() {
         equip.enviar(Protocolo.PARAR)
         partes.add(Semaforo.Parte(nomeParte, monitor.amostras))
         monitor.parar(); levantando = false
+        gravarNuvem()
     }
 
     private fun pausar(automatico: Boolean) {
@@ -499,6 +506,7 @@ class MainActivity : Activity() {
                 "⏱ %02d:%02d:%02d   ·   %.0f m andados".format(s / 3600, s / 60 % 60, s % 60, monitor.situacao.distanciaTotal)
             tvTempo.setTextColor(Estilo.TEXTO)
             verificarPosInicio()
+            if (System.currentTimeMillis() - nuvemGravadaMs > 60_000) gravarNuvem()
         } else if (pausado) {
             tvTempo.text = "PAUSADO depois da parte $parte  ·  volte ao trecho bom e toque em Continuar"; tvTempo.setTextColor(Estilo.ATENCAO)
         } else {
@@ -758,13 +766,15 @@ class MainActivity : Activity() {
         }
         btAbaLev = botaoAba("Levantamento") { mostrarAba(false) }
         btAbaRtk = botaoAba("RTK") { mostrarAba(true) }
+        btAbaNuvem = botaoAba("Nuvem 3D") { mostrarAba(false, nuvem = true) }
         barraAbas.addView(btAbaLev, LinearLayout.LayoutParams(0, dp(44), 1f).apply { rightMargin = dp(6) })
-        barraAbas.addView(btAbaRtk, LinearLayout.LayoutParams(0, dp(44), 1f))
+        barraAbas.addView(btAbaRtk, LinearLayout.LayoutParams(0, dp(44), 1f).apply { rightMargin = dp(6) })
+        barraAbas.addView(btAbaNuvem, LinearLayout.LayoutParams(0, dp(44), 1f))
         raiz.addView(barraAbas)
 
         val conteudo = FrameLayout(this)
-        abaLevantamento = montarAbaLevantamento(); abaRtk = montarAbaRtk()
-        conteudo.addView(abaLevantamento); conteudo.addView(abaRtk)
+        abaLevantamento = montarAbaLevantamento(); abaRtk = montarAbaRtk(); abaNuvem = montarAbaNuvem()
+        conteudo.addView(abaLevantamento); conteudo.addView(abaRtk); conteudo.addView(abaNuvem)
         raiz.addView(conteudo, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 
         // ---- barra de ação fixa: tempo, iniciar/parar e ponto de controle sempre à mão
@@ -955,11 +965,75 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun mostrarAba(rtk: Boolean) {
-        abaLevantamento.visibility = if (rtk) View.GONE else View.VISIBLE
+    private fun mostrarAba(rtk: Boolean, nuvem: Boolean = false) {
+        val lev = !rtk && !nuvem
+        abaLevantamento.visibility = if (lev) View.VISIBLE else View.GONE
         abaRtk.visibility = if (rtk) View.VISIBLE else View.GONE
-        pintarAba(btAbaLev, !rtk); pintarAba(btAbaRtk, rtk)
+        abaNuvem.visibility = if (nuvem) View.VISIBLE else View.GONE
+        pintarAba(btAbaLev, lev); pintarAba(btAbaRtk, rtk); pintarAba(btAbaNuvem, nuvem)
+        if (nuvem) atualizarListaNuvens()
         esconderTeclado()
+    }
+
+    // ------------------------------------------------------------------ nuvem 3D
+    private fun pastaLogs(): File = getExternalFilesDir("logs_slam") ?: filesDir
+
+    private fun montarAbaNuvem(): ScrollView {
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(14), dp(8), dp(14), dp(24)) }
+        val c1 = Estilo.cartao(this)
+        c1.addView(Estilo.tituloCartao(this, "Levantamento em andamento"))
+        c1.addView(Estilo.botao(this, "Ver a nuvem ao vivo", Estilo.TipoBotao.CHEIO) {
+            startActivity(android.content.Intent(this, Nuvem3DActivity::class.java))
+        })
+        c1.addView(Estilo.texto(this, "A nuvem é a que o scanner manda ao celular (a do SLAM do próprio aparelho, um ponto a cada " +
+            "10 cm), não o nosso processamento: serve para ver se cobriu tudo e se o traçado faz sentido. Fica gravada a cada " +
+            "minuto e ao parar/pausar.", 13f, Estilo.TEXTO_2).apply { setPadding(dp(2), dp(10), dp(2), 0) })
+        col.addView(c1)
+        val c2 = Estilo.cartao(this)
+        c2.addView(Estilo.tituloCartao(this, "Levantamentos gravados"))
+        listaNuvens = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        c2.addView(listaNuvens)
+        col.addView(c2)
+        return ScrollView(this).apply { addView(col); clipToPadding = false }
+    }
+
+    private fun atualizarListaNuvens() {
+        listaNuvens.removeAllViews()
+        val arqs = pastaLogs().listFiles { f -> f.name.startsWith("nuvem_") && f.name.endsWith(".bin") }
+            ?.sortedByDescending { it.lastModified() } ?: emptyList()
+        if (arqs.isEmpty()) {
+            listaNuvens.addView(Estilo.texto(this, "Nenhum ainda. A nuvem é gravada durante o levantamento (app 0.8 em diante).", 13f, Estilo.TEXTO_2))
+            return
+        }
+        val fmt = SimpleDateFormat("dd/MM HH:mm", Locale.US)
+        for (f in arqs) {
+            val n = NuvemAcumulada.contar(f)
+            val nome = f.name.removePrefix("nuvem_").removeSuffix(".bin")
+            val b = Estilo.botao(this, "$nome\n%s · %,d pontos · %.1f MB".format(fmt.format(Date(f.lastModified())), n, f.length() / 1e6)
+                .replace(',', '.'), Estilo.TipoBotao.CONTORNO) {
+                startActivity(android.content.Intent(this, Nuvem3DActivity::class.java).putExtra("arquivo", f.absolutePath))
+            }
+            b.isAllCaps = false; b.gravity = Gravity.START or Gravity.CENTER_VERTICAL
+            b.setOnLongClickListener {
+                AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert).setTitle("Apagar a prévia?")
+                    .setMessage("Apaga só a prévia da nuvem no celular ($nome). Os dados do scanner não são afetados.")
+                    .setPositiveButton("Apagar") { _, _ -> f.delete(); atualizarListaNuvens() }
+                    .setNegativeButton("Cancelar", null).show()
+                true
+            }
+            listaNuvens.addView(b, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) })
+        }
+        listaNuvens.addView(Estilo.texto(this, "Toque para abrir; toque longo para apagar a prévia.", 12f, Estilo.TEXTO_3).apply { setPadding(dp(2), dp(8), 0, 0) })
+    }
+
+    /** Grava a nuvem do levantamento atual (em segundo plano). */
+    private fun gravarNuvem() {
+        val nome = NuvemAtual.nome
+        if (nome.isEmpty() || NuvemAtual.nuvem.n == 0) return
+        nuvemGravadaMs = System.currentTimeMillis()
+        trabalho.execute {
+            try { NuvemAtual.nuvem.gravar(File(pastaLogs(), "nuvem_$nome.bin")) } catch (_: Exception) { }
+        }
     }
 
     private fun botaoAba(t: String, acao: () -> Unit) = Button(this).apply {

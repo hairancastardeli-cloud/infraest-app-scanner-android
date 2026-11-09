@@ -16,6 +16,8 @@ levantamento (nome com data e hora; partes `_p2`, `_p3`…), pausa sozinho quand
 - `ConectorScanner.kt` — achar e conectar a rede Wi-Fi do scanner e abrir o socket.
 - `MonitorSlam.kt` — alarme do SLAM (posição tremendo, ambiente pobre contra o normal do levantamento, velocidade/salto, tempo
   sem quadro) e ponto de retomada; limites calibrados com 2 testes reais, ainda **provisórios**.
+- `NuvemAcumulada.kt`, `Visualizador3D.kt`, `Nuvem3DActivity.kt` — prévia da nuvem (voxel de 10 cm, gravada em
+  `logs_slam/nuvem_*.bin`) e visualizador 3D em OpenGL ES 2.0 (girar, mover, zoom).
 - `Semaforo.kt` — resumo verde/amarelo/vermelho do fim do levantamento (perdido, tremor, ambiente pobre, fechamento, GNSS × SLAM).
 - `Ntrip.kt`, `Gga.kt` — cliente NTRIP (mountpoints, correções RTCM) e leitura de GGA/GST.
 - `MainActivity.kt`, `Estilo.kt`, `VistaTopo.kt` — interface, tema e vista de cima do caminho. `Diagnostico.kt`, `Equipamento.kt` — registros.
