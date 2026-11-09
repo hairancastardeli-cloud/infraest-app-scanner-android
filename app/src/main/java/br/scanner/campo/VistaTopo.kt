@@ -18,11 +18,19 @@ class VistaTopo(ctx: Context) : View(ctx) {
     private val pPontos = Paint().apply { color = Color.argb(160, 220, 220, 220); strokeWidth = 2f }
     private val pAtual = Paint().apply { color = Color.rgb(255, 80, 80); isAntiAlias = true }
     private val pTexto = Paint().apply { color = Color.LTGRAY; textSize = 28f; isAntiAlias = true }
+    private val pAtencao = Paint().apply { color = Color.rgb(245, 158, 11); strokeWidth = 6f; isAntiAlias = true }
+    private val pPerdido = Paint().apply { color = Color.rgb(239, 68, 68); strokeWidth = 6f; isAntiAlias = true }
+    private val pRetomada = Paint().apply { color = Color.rgb(34, 197, 94); isAntiAlias = true }
+    @Volatile private var retomada: FloatArray? = null
 
-    fun limpar() { synchronized(caminho) { caminho.clear() }; pontos = FloatArray(0); postInvalidate() }
+    fun limpar() { synchronized(caminho) { caminho.clear() }; pontos = FloatArray(0); retomada = null; postInvalidate() }
 
-    fun adicionar(q: Protocolo.QuadroNuvem) {
-        synchronized(caminho) { caminho.add(floatArrayOf(q.pose[0], q.pose[1])) }
+    /** Marca (círculo verde) onde recomeçar depois de pausar; null apaga. */
+    fun marcarRetomada(x: Float?, y: Float?) { retomada = if (x == null || y == null) null else floatArrayOf(x, y); postInvalidate() }
+
+    /** nivel: 0 normal, 1 atenção, 2 perdido (cor do trecho). */
+    fun adicionar(q: Protocolo.QuadroNuvem, nivel: Int = 0) {
+        synchronized(caminho) { caminho.add(floatArrayOf(q.pose[0], q.pose[1], nivel.toFloat())) }
         pontos = q.pontos
         postInvalidate()
     }
@@ -42,7 +50,15 @@ class VistaTopo(ctx: Context) : View(ctx) {
         val pts = pontos
         var i = 0
         while (i + 2 < pts.size) { c.drawPoint(u(pts[i]), v(pts[i + 1]), pPontos); i += 3 }
-        for (k in 1 until cam.size) c.drawLine(u(cam[k - 1][0]), v(cam[k - 1][1]), u(cam[k][0]), v(cam[k][1]), pCaminho)
+        for (k in 1 until cam.size) {
+            val tinta = when (cam[k][2].toInt()) { 2 -> pPerdido; 1 -> pAtencao; else -> pCaminho }
+            if (cam[k][2].toInt() == 2) continue                    // depois do salto a pose não vale: não liga os pontos
+            c.drawLine(u(cam[k - 1][0]), v(cam[k - 1][1]), u(cam[k][0]), v(cam[k][1]), tinta)
+        }
+        retomada?.let { r ->
+            c.drawCircle(u(r[0]), v(r[1]), 16f, pRetomada)
+            c.drawText("recomeçar aqui", u(r[0]) + 20f, v(r[1]) - 12f, pTexto)
+        }
         c.drawCircle(u(atual[0]), v(atual[1]), 9f, pAtual)
         c.drawText("%.0f m".format(10f), 16f, height - 16f, pTexto)
         c.drawLine(80f, height - 26f, 80f + 10 * esc, height - 26f, pTexto)

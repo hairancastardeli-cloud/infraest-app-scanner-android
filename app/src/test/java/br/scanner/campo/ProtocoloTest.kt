@@ -73,6 +73,7 @@ class ProtocoloTest {
         assertNotNull(g); g!!
         assertEquals(4, g.qualidade); assertEquals(18, g.satelites)
         assertTrue(g.resumo().contains("RTK FIXO"))
+        assertEquals(-23.5, g.lat!!, 1e-9); assertEquals(-46.5, g.lon!!, 1e-9)   // 23°30' S, 046°30' W
         assertEquals(null, Gga.ler("\$$corpo*00"))                // checksum errado
     }
 }

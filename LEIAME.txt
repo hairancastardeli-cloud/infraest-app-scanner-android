@@ -1,9 +1,32 @@
-SCANNER CAMPO 0.6 — app Android próprio para o scanner GeoSun (GS-102G)
+SCANNER CAMPO 0.7 — app Android próprio para o scanner GeoSun (GS-102G)
 =====================================================================
 Feito a partir da leitura do FireEye 3.2.0 (protocolo do scanner). Não usa nem altera o app da GeoSun.
 
+NOVIDADES DA 0.7
+  - NOME COM DATA E HORA: cada início manda ao scanner "<nome>-MMddHHmmss" (como o FireEye). Antes, iniciar de novo
+    sem mudar o nome SOBRESCREVIA o levantamento anterior no cartão do scanner.
+  - PREPARO: antes de iniciar só o cartão de memória bloqueia. Parâmetros, calibração, sistema, bateria, lidar e
+    câmeras só ficam OK depois de iniciar neste scanner (a 0.6 avisava "não está pronto" toda vez); agora o app
+    confere 30 s depois de o scanner confirmar o início e só avisa se algo não ficou OK.
+  - ALARME NOVO, calibrado com os testes de 15/10/2026:
+      * POSIÇÃO TREMENDO: a pose vai e volta de um quadro para o outro. No teste 2 apareceu ~11 s antes do salto e
+        nunca aparece andando normal. Apita repetido: pare, volte alguns metros e ande devagar.
+      * AMBIENTE POBRE: pontos abaixo de 25% do normal DESTE levantamento por mais de 6 s (o alarme antigo comparava
+        com os últimos segundos e não via a queda gradual). Apita só ao entrar: sozinho não quer dizer que vai se perder.
+  - PAUSAR / CONTINUAR: o scanner não tem pausa; "Pausar" para a parte atual e "Continuar" inicia a parte seguinte
+    ("<nome>_p2-…"). O mapa marca com um círculo verde o último trecho bom: volte até ele, fique parado e continue.
+    A parte nova precisa passar de novo por 10 a 20 m do trecho anterior para o processador emendar.
+  - PAUSA AUTOMÁTICA (pode desligar no cartão Levantamento): quando o SLAM se perde pela própria pose (salto), o app
+    conta 5 s e pausa; "Não pausar" cancela por 30 s. Falta de quadros (pode ser só o Wi-Fi) não pausa.
+  - RESUMO NO FIM ("Encerrar"): verde / amarelo / vermelho por parte, com: vezes que se perdeu, tempo tremendo,
+    tempo em ambiente pobre, fechamento (se terminou onde começou) e GNSS × SLAM (com RTK fixo; só erro grosso, a
+    antena fica a ~14 cm do centro). Salvo em logs_slam/semaforo_<nome>_<hora>.txt. É um indicador pela trajetória
+    do scanner, não o processamento; os limites ficam provisórios até a calibração com levantamentos processados
+    (mande os CSVs de logs_slam junto com os dados).
+  - Mapa: trechos em atenção em laranja, perdido em vermelho.
+
 INSTALAR NO CELULAR
-  1. Mande o arquivo ScannerCampo-0.6.apk para o celular (cabo USB, Drive, WhatsApp).
+  1. Mande o arquivo ScannerCampo-0.7.apk para o celular (cabo USB, Drive, WhatsApp).
   2. Abra o arquivo no celular. O Android pede para permitir "instalar apps desconhecidos" para o app que
      abriu o arquivo (Arquivos, Chrome, WhatsApp…): permita e instale.
   3. O FireEye e o Scanner Campo NÃO devem ficar conectados ao scanner ao mesmo tempo: feche o FireEye antes.

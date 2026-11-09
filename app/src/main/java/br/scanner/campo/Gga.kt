@@ -1,7 +1,10 @@
 package br.scanner.campo
 
 /** Leitura da linha NMEA GGA que o scanner manda (posição do receptor GNSS e qualidade da solução). */
-data class Gga(val qualidade: Int, val satelites: Int, val hdop: Double?, val idadeCorrecao: Double?, val altitude: Double?) {
+data class Gga(
+    val qualidade: Int, val satelites: Int, val hdop: Double?, val idadeCorrecao: Double?, val altitude: Double?,
+    val lat: Double? = null, val lon: Double? = null,          // graus decimais (sul e oeste negativos)
+) {
 
     fun nomeSolucao(): String = when (qualidade) {
         0 -> "Sem posição"; 1 -> "Autônomo"; 2 -> "DGPS"; 4 -> "RTK fixo"; 5 -> "RTK flutuante"; 6 -> "Estimado"; else -> "Qualidade $qualidade"
@@ -33,7 +36,17 @@ data class Gga(val qualidade: Int, val satelites: Int, val hdop: Double?, val id
             return Gga(
                 qualidade = c[6].toIntOrNull() ?: 0, satelites = c[7].toIntOrNull() ?: 0, hdop = c[8].toDoubleOrNull(),
                 altitude = c[9].toDoubleOrNull(), idadeCorrecao = c[13].toDoubleOrNull(),
+                lat = grau(c[2], c[3], 2), lon = grau(c[4], c[5], 3),
             )
+        }
+
+        /** ddmm.mmmm / dddmm.mmmm + hemisfério -> graus decimais. */
+        private fun grau(v: String, hem: String, nGraus: Int): Double? {
+            if (v.length <= nGraus) return null
+            val g = v.substring(0, nGraus).toIntOrNull() ?: return null
+            val m = v.substring(nGraus).toDoubleOrNull() ?: return null
+            val d = g + m / 60.0
+            return if (hem == "S" || hem == "W") -d else d
         }
 
         private fun checksumOk(l: String): Boolean {

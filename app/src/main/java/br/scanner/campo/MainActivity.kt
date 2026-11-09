@@ -23,12 +23,17 @@ import android.view.WindowInsets
 import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import br.scanner.campo.Estilo.dp
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.concurrent.Executors
 import kotlin.math.max
 
@@ -95,6 +100,18 @@ class MainActivity : Activity() {
     private var levantando = false
     private var silenciadoAte = 0L
     private var ultimoAlarme = 0L
+    private var ultimoNivel = MonitorSlam.Nivel.PARADO
+
+    // levantamento em partes: pausar = PARAR + depois INICIAR a parte seguinte (o scanner não tem pausa de verdade)
+    private var sessaoBase = ""
+    private var parte = 0
+    private var nomeParte = ""
+    private var pausado = false
+    private val partes = ArrayList<Semaforo.Parte>()
+    private lateinit var cbAutoPausa: CheckBox
+    private var autoPausaSuprimidaAte = 0L
+    private var dialogoContagem: AlertDialog? = null
+    private var avisoPosInicio = false
 
     // RTK
     private lateinit var etHost: Estilo.Campo
@@ -253,8 +270,9 @@ class MainActivity : Activity() {
         ntrip.atualizarGga(texto.substring(texto.indexOf('$').coerceAtLeast(0)).lineSequence().first().trim { it <= ' ' } + "")
         val g = Gga.ler(texto)
         diag.gga(texto, g != null)
-        if (g != null) ui.post {
-            mostrarGnss(g, texto)
+        if (g != null) {
+            monitor.gnss(g.lat, g.lon, g.qualidade)
+            ui.post { mostrarGnss(g, texto) }
         }
     }
 
@@ -279,7 +297,7 @@ class MainActivity : Activity() {
             Protocolo.Tipo.NUVEM -> {
                 val q = Protocolo.lerNuvem(m.dados) ?: return
                 val s = monitor.quadro(q)
-                vista.adicionar(q)
+                vista.adicionar(q, when (s.nivel) { MonitorSlam.Nivel.PERDIDO -> 2; MonitorSlam.Nivel.ATENCAO -> 1; else -> 0 })
                 ui.post { mostrarSlam(s) }
             }
             Protocolo.Tipo.GNSS -> {                                      // se vier texto NMEA por aqui, também serve
@@ -301,49 +319,146 @@ class MainActivity : Activity() {
     // ------------------------------------------------------------------ levantamento
     private fun alternarLevantamento() {
         if (!equip.conectado) { toast("Sem conexão com o scanner"); return }
-        if (!levantando) {
-            val falta = pendenciasDoScanner()
-            if (falta.isNotEmpty()) {
-                AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert).setTitle("O scanner ainda não está pronto")
-                    .setMessage("O FireEye espera isto antes de iniciar:\n\n" + falta.joinToString("\n") { "• $it" } +
-                        "\n\nRecém-ligado, o scanner leva alguns minutos (o lidar precisa girar e a checagem terminar). Se iniciar agora, ele pode ignorar o comando.")
-                    .setPositiveButton("Aguardar", null)
-                    .setNegativeButton("Iniciar mesmo assim") { _, _ -> iniciarLevantamento() }.show()
-                return
-            }
-            iniciarLevantamento()
-        } else {
-            pararLevantamento()
+        if (levantando) { pararLevantamento(); return }
+        val falta = pendenciasDoScanner()
+        if (falta.isNotEmpty()) {
+            AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert).setTitle("O scanner ainda não está pronto")
+                .setMessage(falta.joinToString("\n") { "• $it" })
+                .setPositiveButton("Aguardar", null)
+                .setNegativeButton("Iniciar mesmo assim") { _, _ -> iniciarLevantamento(pausado) }.show()
+            return
         }
+        iniciarLevantamento(pausado)
     }
 
-    private fun iniciarLevantamento() {
-        run {
-            val nome = etProjeto.edit.text.toString().trim().ifEmpty { "levantamento" }.replace(Regex("[^A-Za-z0-9_-]"), "_")
-            prefs.edit().putString("projeto", nome).apply()
-            respostaInicioMs = 0L; inicioEnviadoMs = System.currentTimeMillis(); inicioLevantamentoMs = inicioEnviadoMs
-            diag.nota("INICIAR enviado (projeto $nome); preparo: parâmetros=$paramsOk calibração=$csvOk checagem=${checagem.toList()}")
-            equip.enviar(Protocolo.INICIAR, Protocolo.dadosIniciar("Campo", nome))
-            ui.postDelayed({ equip.enviar(Protocolo.PARAMETROS_AMOSTRA, Protocolo.dadosAmostragem()) }, 500)
-            monitor.comecar(nome); vista.limpar()
-            levantando = true
-            btIniciar.text = "Parar levantamento"; Estilo.aplicarTipo(this, btIniciar, Estilo.TipoBotao.PERIGO)
-            esconderTeclado()
-            mostrarSlam(monitor.situacao)
-        }
+    /**
+     * Inicia um levantamento novo ou, se [continuacao], a parte seguinte do mesmo. O nome mandado ao scanner leva a data e
+     * a hora (como o FireEye faz: "<nome>-MMddHHmm"); sem isso, um levantamento novo com o mesmo nome SOBRESCREVIA o
+     * anterior no cartão do scanner. Partes: "<nome>_p2-…", "<nome>_p3-…" (o processador junta as partes do mesmo nome).
+     */
+    private fun iniciarLevantamento(continuacao: Boolean = false) {
+        if (!continuacao || sessaoBase.isEmpty()) {
+            sessaoBase = etProjeto.edit.text.toString().trim().ifEmpty { "levantamento" }.replace(Regex("[^A-Za-z0-9_-]"), "_")
+            prefs.edit().putString("projeto", sessaoBase).apply()
+            parte = 1; partes.clear()
+        } else parte++
+        val hora = SimpleDateFormat("MMddHHmmss", Locale.US).format(Date())
+        nomeParte = sessaoBase + (if (parte > 1) "_p$parte" else "") + "-" + hora
+        respostaInicioMs = 0L; inicioEnviadoMs = System.currentTimeMillis(); inicioLevantamentoMs = inicioEnviadoMs
+        avisoPosInicio = false
+        diag.nota("INICIAR enviado (projeto $nomeParte, parte $parte); preparo: parâmetros=$paramsOk calibração=$csvOk checagem=${checagem.toList()}")
+        equip.enviar(Protocolo.INICIAR, Protocolo.dadosIniciar("Campo", nomeParte))
+        ui.postDelayed({ equip.enviar(Protocolo.PARAMETROS_AMOSTRA, Protocolo.dadosAmostragem()) }, 500)
+        monitor.comecar(nomeParte); vista.limpar()
+        levantando = true; pausado = false
+        atualizarBotoes(); atualizarPreparo()
+        esconderTeclado()
+        mostrarSlam(monitor.situacao)
+        if (parte > 1) toast("Parte $parte iniciada: fique parado até os quadros chegarem")
     }
 
     private fun pararLevantamento() {
-        run {
-            AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert).setTitle("Parar o levantamento?")
-                .setPositiveButton("Parar") { _, _ ->
-                    equip.enviar(Protocolo.PARAR)
-                    monitor.parar(); levantando = false; atualizarPreparo()
-                    btIniciar.text = "Iniciar levantamento"; Estilo.aplicarTipo(this, btIniciar, Estilo.TipoBotao.SUCESSO)
-                    mostrarSlam(monitor.situacao)
-                    toast("Registro do SLAM: ${monitor.arquivoLog?.name ?: "-"}")
-                }.setNegativeButton("Continuar", null).show()
+        AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert).setTitle("Parar o levantamento?")
+            .setMessage("Pausar: para agora e continua depois numa parte nova (o processador junta as partes).\nEncerrar: termina e mostra o resumo.")
+            .setPositiveButton("Encerrar") { _, _ -> encerrar() }
+            .setNeutralButton("Pausar") { _, _ -> pausar(false) }
+            .setNegativeButton("Voltar", null).show()
+    }
+
+    /** Fecha a parte atual (PARAR) e guarda os quadros dela para o resumo. */
+    private fun fecharParte() {
+        if (!levantando) return
+        equip.enviar(Protocolo.PARAR)
+        partes.add(Semaforo.Parte(nomeParte, monitor.amostras))
+        monitor.parar(); levantando = false
+    }
+
+    private fun pausar(automatico: Boolean) {
+        dialogoContagem?.dismiss(); dialogoContagem = null
+        if (!levantando) return
+        val ret = monitor.pontoRetomada()
+        val am = monitor.amostras
+        fecharParte()
+        pausado = true
+        atualizarBotoes(); atualizarPreparo(); mostrarSlam(monitor.situacao)
+        val onde = if (ret != null && ret.first in am.indices) {
+            vista.marcarRetomada(am[ret.first].x.toFloat(), am[ret.first].y.toFloat())
+            "Volte uns %.0f m pelo caminho, até o círculo verde do mapa (o último trecho bom). ".format(maxOf(ret.second, 5.0))
+        } else "Volte alguns metros até um trecho que estava bom. "
+        diag.nota("pausa ${if (automatico) "automática" else "manual"} na parte $parte ($nomeParte)")
+        AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
+            .setTitle(if (automatico) "Pausado: o SLAM se perdeu" else "Levantamento pausado")
+            .setMessage(onde + "Recomece num lugar com paredes e cantos à vista (não na porta nem no meio do aberto), " +
+                "fique parado e toque em Continuar. A parte nova precisa passar de novo por esse trecho (10 a 20 m em comum) para o processador emendar.")
+            .setPositiveButton("Entendi", null).show()
+    }
+
+    private fun encerrar() {
+        dialogoContagem?.dismiss(); dialogoContagem = null
+        fecharParte()
+        pausado = false
+        vista.marcarRetomada(null, null)
+        atualizarBotoes(); atualizarPreparo(); mostrarSlam(monitor.situacao)
+        if (partes.isEmpty()) return
+        val rs = partes.map { Semaforo.avaliar(it) }
+        val txt = Semaforo.texto(rs)
+        val pior = rs.maxOf { it.cor }
+        try {
+            val pasta = getExternalFilesDir("logs_slam") ?: filesDir
+            File(pasta, "semaforo_${sessaoBase}_${SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())}.txt")
+                .writeText("Resumo do levantamento $sessaoBase (${partes.size} parte(s))\n\n$txt\n" +
+                    "Indicador pela trajetória do scanner (não é o processamento). Limites provisórios.\n")
+        } catch (_: Exception) { }
+        val conselho = when (pior) {
+            Semaforo.Cor.VERDE -> "Nenhum sinal de problema."
+            Semaforo.Cor.AMARELO -> "Houve trechos de risco (amarelo no mapa). Se der, refaça esse trecho numa parte nova que passe de novo por ele."
+            Semaforo.Cor.VERMELHO -> "Refaça o trecho com problema antes de ir embora: inicie com o mesmo nome (não apaga o anterior) passando de novo pelo trecho bom anterior."
         }
+        AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
+            .setTitle("Resumo: " + Semaforo.nomeCor(pior))
+            .setMessage(txt + "\n" + conselho)
+            .setPositiveButton("Ok", null).show()
+    }
+
+    private fun atualizarBotoes() {
+        when {
+            levantando -> {
+                btIniciar.text = "Parar levantamento"; Estilo.aplicarTipo(this, btIniciar, Estilo.TipoBotao.PERIGO)
+                btPonto.text = "Ponto de controle"; Estilo.aplicarTipo(this, btPonto, Estilo.TipoBotao.CONTORNO)
+            }
+            pausado -> {
+                btIniciar.text = "Continuar (parte ${parte + 1})"; Estilo.aplicarTipo(this, btIniciar, Estilo.TipoBotao.SUCESSO)
+                btPonto.text = "Encerrar"; Estilo.aplicarTipo(this, btPonto, Estilo.TipoBotao.PERIGO)
+            }
+            else -> {
+                btIniciar.text = "Iniciar levantamento"; Estilo.aplicarTipo(this, btIniciar, Estilo.TipoBotao.SUCESSO)
+                btPonto.text = "Ponto de controle"; Estilo.aplicarTipo(this, btPonto, Estilo.TipoBotao.CONTORNO)
+            }
+        }
+    }
+
+    /** SLAM perdido pela pose: conta 5 s (dá para cancelar) e pausa sozinho. */
+    private fun contagemAutoPausa(motivo: String) {
+        if (dialogoContagem != null) return
+        var resta = 5
+        val d = AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
+            .setTitle("SLAM perdido: pausando em $resta s")
+            .setMessage("$motivo\n\nO app vai pausar o levantamento para você recomeçar num trecho bom.")
+            .setPositiveButton("Pausar agora") { _, _ -> pausar(true) }
+            .setNegativeButton("Não pausar") { _, _ -> autoPausaSuprimidaAte = System.currentTimeMillis() + 30_000; dialogoContagem = null }
+            .setCancelable(false).create()
+        dialogoContagem = d
+        d.show()
+        val tique = object : Runnable {
+            override fun run() {
+                if (dialogoContagem !== d || !d.isShowing) return
+                resta--
+                if (resta <= 0) { pausar(true); return }
+                d.setTitle("SLAM perdido: pausando em $resta s")
+                ui.postDelayed(this, 1000)
+            }
+        }
+        ui.postDelayed(tique, 1000)
     }
 
     // ------------------------------------------------------------------ tiles do topo
@@ -380,8 +495,12 @@ class MainActivity : Activity() {
         if (!::tvTempo.isInitialized) return
         if (levantando) {
             val s = (System.currentTimeMillis() - inicioLevantamentoMs) / 1000
-            tvTempo.text = "⏱ %02d:%02d:%02d   ·   %.0f m andados".format(s / 3600, s / 60 % 60, s % 60, monitor.situacao.distanciaTotal)
+            tvTempo.text = (if (parte > 1) "Parte $parte   ·   " else "") +
+                "⏱ %02d:%02d:%02d   ·   %.0f m andados".format(s / 3600, s / 60 % 60, s % 60, monitor.situacao.distanciaTotal)
             tvTempo.setTextColor(Estilo.TEXTO)
+            verificarPosInicio()
+        } else if (pausado) {
+            tvTempo.text = "PAUSADO depois da parte $parte  ·  volte ao trecho bom e toque em Continuar"; tvTempo.setTextColor(Estilo.ATENCAO)
         } else {
             tvTempo.text = "Levantamento parado"; tvTempo.setTextColor(Estilo.TEXTO_2)
         }
@@ -395,33 +514,52 @@ class MainActivity : Activity() {
 
     // ------------------------------------------------------------------ preparo do scanner
     /**
-     * O que falta ANTES de iniciar. Como no FireEye, a checagem do lidar e das câmeras só vale depois de iniciar; antes
-     * contam: cartão de memória, parâmetros, calibração, sistema principal e bateria.
+     * O que impede de iniciar: só o cartão de memória. Parâmetros, calibração e os itens da checagem só ficam OK DEPOIS
+     * de iniciar neste scanner (o app 0.6 avisava "não está pronto" toda vez, e o levantamento corria normal); agora
+     * são conferidos 30 s depois de o scanner confirmar o início ([verificarPosInicio]).
      */
     private fun pendenciasDoScanner(): List<String> {
         val l = ArrayList<String>()
         if (memoriaTotal == 0 || (checagemRecebida && checagem[0] == 0))
             l.add("CARTÃO DE MEMÓRIA ausente ou com problema (coloque o cartão e reinicie o scanner)")
-        if (!paramsOk) l.add("parâmetros de inicialização (ainda não chegaram)")
-        if (!csvOk) l.add("calibração do lidar (ainda não chegou)")
-        if (checagemRecebida) for (i in listOf(2, 3)) if (checagem[i] != 1) l.add("checagem: ${Protocolo.ITENS_CHECAGEM[i].lowercase()} ainda não está OK")
         return l
     }
 
-    private fun subPreparo(): String = if (pendenciasDoScanner().isEmpty() && paramsOk) "pronto para iniciar" else "preparando…"
+    /** Itens que precisam estar OK depois de iniciar. */
+    private fun pendenciasPosInicio(): List<String> {
+        val l = ArrayList<String>()
+        if (!paramsOk) l.add("parâmetros")
+        if (!csvOk) l.add("calibração do lidar")
+        if (!checagemRecebida) l.add("checagem do sistema (não chegou)")
+        else for ((i, nome) in Protocolo.ITENS_CHECAGEM.withIndex()) if (i > 0 && checagem[i] != 1) l.add(nome.lowercase())
+        return l
+    }
+
+    /** 30 s depois de o scanner confirmar o início, avisa (uma vez) se algo da checagem não ficou OK. */
+    private fun verificarPosInicio() {
+        if (avisoPosInicio || respostaInicioMs == 0L || System.currentTimeMillis() - respostaInicioMs < 30_000) return
+        avisoPosInicio = true
+        val f = pendenciasPosInicio()
+        diag.nota("checagem 30 s depois do início: " + (if (f.isEmpty()) "tudo OK" else f.joinToString(", ")))
+        atualizarPreparo()
+        if (f.isNotEmpty()) { toast("Checagem do scanner: " + f.joinToString(", ") + " não OK"); apito(2) }
+    }
+
+    private fun subPreparo(): String = if (pendenciasDoScanner().isEmpty()) "pronto para iniciar" else "verifique o cartão"
 
     private fun atualizarPreparo() {
         if (!::tvPreparo.isInitialized) return
         fun mk(ok: Boolean, t: String) = (if (ok) "✔ " else "… ") + t
-        val cartao = if (memoriaTotal == 0 || (checagemRecebida && checagem[0] == 0)) "✘ cartão de memória" else mk(checagemRecebida && checagem[0] == 1 || memoriaTotal > 0, "cartão de memória")
-        val partes = arrayListOf(mk(paramsOk, "parâmetros"), mk(csvOk, "calibração"), cartao)
-        if (checagemRecebida) { partes.add(mk(checagem[2] == 1, "sistema principal")); partes.add(mk(checagem[3] == 1, "bateria")) }
-        else partes.add("… checagem do sistema")
-        if (firmware.isNotEmpty()) partes.add("firmware $firmware")
-        val depois = if (!levantando) "Lidar e câmeras: checados depois de iniciar." else
-            "Lidar e câmeras: " + (if (checagemRecebida) mk(checagem[1] == 1, "lidar") + "  " + mk(checagem[4] == 1 && checagem[5] == 1, "câmeras") else "aguardando checagem")
-        tvPreparo.text = "Antes de iniciar: " + partes.joinToString("   ") + "\n" + depois
-        tvPreparo.setTextColor(if (pendenciasDoScanner().isEmpty() && (checagemRecebida || paramsOk)) Estilo.OK else Estilo.TEXTO_2)
+        val cartaoRuim = memoriaTotal == 0 || (checagemRecebida && checagem[0] == 0)
+        val cartao = if (cartaoRuim) "✘ cartão de memória" else mk(checagemRecebida && checagem[0] == 1 || memoriaTotal > 0, "cartão de memória")
+        val antes = "Antes de iniciar: $cartao" + (if (firmware.isNotEmpty()) "   firmware $firmware" else "")
+        val itens = listOf(paramsOk to "parâmetros", csvOk to "calibração") +
+            Protocolo.ITENS_CHECAGEM.withIndex().filter { it.index > 0 }.map { (checagemRecebida && checagem[it.index] == 1) to it.value.lowercase() }
+        val depois = if (!levantando) "Depois de iniciar o scanner confere: parâmetros, calibração, lidar, sistema, bateria e câmeras."
+            else "Depois de iniciar: " + itens.joinToString("   ") { mk(it.first, it.second) }
+        tvPreparo.text = antes + "\n" + depois
+        val falhouPos = levantando && avisoPosInicio && pendenciasPosInicio().isNotEmpty()
+        tvPreparo.setTextColor(if (cartaoRuim || falhouPos) Estilo.ATENCAO else if (levantando && pendenciasPosInicio().isEmpty()) Estilo.OK else Estilo.TEXTO_2)
         if (equip.conectado) pintaScanner("Conectado", Estilo.OK, subPreparo())
     }
 
@@ -429,8 +567,8 @@ class MainActivity : Activity() {
     private fun textoAguardandoInicio(): String {
         val agora = System.currentTimeMillis()
         val seg = (agora - inicioEnviadoMs) / 1000
-        val pend = pendenciasDoScanner()
-        val extra = if (pend.isNotEmpty()) "\nO scanner ainda não terminou de se preparar: " + pend.joinToString("; ") + "." else ""
+        val pend = pendenciasPosInicio()
+        val extra = if (pend.isNotEmpty()) "\nAinda não OK no scanner: " + pend.joinToString("; ") + "." else ""
         return when {
             respostaInicioMs == 0L && seg < 8 -> "Comando de início enviado; aguardando o scanner confirmar ($seg s)…"
             respostaInicioMs == 0L -> "O scanner NÃO confirmou o início em $seg s. Toque em Parar levantamento, espere o scanner terminar de ligar/checar e tente de novo.$extra"
@@ -468,14 +606,24 @@ class MainActivity : Activity() {
         numPontos.valor.text = if (s.pontos > 0) "%,d".format(s.pontos).replace(',', '.') else "—"
         numQuadros.valor.text = "%.1f /s".format(s.quadrosPorS)
         numAndado.valor.text = "%.0f m".format(s.distanciaTotal)
-        alarme(s.nivel)
+        alarme(s)
+        if (levantando && s.perdidoPose && cbAutoPausa.isChecked && System.currentTimeMillis() > autoPausaSuprimidaAte)
+            contagemAutoPausa(s.motivo)
     }
 
-    private fun alarme(n: MonitorSlam.Nivel) {
+    /** PERDIDO apita a cada 2 s; ATENÇÃO forte (tremor, salto, rapidez) a cada 4 s; ATENÇÃO leve (ambiente pobre) só ao entrar. */
+    private fun alarme(s: MonitorSlam.Situacao) {
+        val n = s.nivel
+        val entrou = n != ultimoNivel
+        ultimoNivel = n
         val agora = System.currentTimeMillis()
         if (agora < silenciadoAte) return
-        val intervalo = when (n) { MonitorSlam.Nivel.PERDIDO -> 2000L; MonitorSlam.Nivel.ATENCAO -> 4000L; else -> return }
-        if (agora - ultimoAlarme < intervalo) return
+        val intervalo = when {
+            n == MonitorSlam.Nivel.PERDIDO -> 2000L
+            n == MonitorSlam.Nivel.ATENCAO && (s.repetir || entrou) -> 4000L
+            else -> return
+        }
+        if (agora - ultimoAlarme < intervalo && !entrou) return
         ultimoAlarme = agora
         if (n == MonitorSlam.Nivel.PERDIDO) { apito(3); vibrar(longArrayOf(0, 500, 200, 500, 200, 500)) }
         else { apito(1); vibrar(longArrayOf(0, 300)) }
@@ -629,7 +777,10 @@ class MainActivity : Activity() {
         val linhaBotoes = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(6), 0, 0) }
         btIniciar = Estilo.botao(this, "Iniciar levantamento", Estilo.TipoBotao.SUCESSO) { alternarLevantamento() }
         btPonto = Estilo.botao(this, "Ponto de controle", Estilo.TipoBotao.CONTORNO) {
-            if (!levantando) toast("Inicie o levantamento antes")
+            if (pausado) AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert).setTitle("Encerrar o levantamento?")
+                .setMessage("Termina sem continuar e mostra o resumo das ${partes.size} parte(s).")
+                .setPositiveButton("Encerrar") { _, _ -> encerrar() }.setNegativeButton("Voltar", null).show()
+            else if (!levantando) toast("Inicie o levantamento antes")
             else AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert).setTitle("Gravar ponto de controle aqui?")
                 .setPositiveButton("Gravar") { _, _ -> equip.enviar(Protocolo.PONTO_CONTROLE) }
                 .setNegativeButton("Cancelar", null).show()
@@ -715,7 +866,15 @@ class MainActivity : Activity() {
         etProjeto = Estilo.campo(this, "Nome do projeto", prefs.getString("projeto", "") ?: "", dica = "ex.: rua_matriz_1")
         etProjeto.edit.imeOptions = EditorInfo.IME_ACTION_DONE or EditorInfo.IME_FLAG_NO_EXTRACT_UI
         cartaoLev.addView(etProjeto.bloco)
-        cartaoLev.addView(Estilo.texto(this, "Iniciar, parar e gravar ponto de controle: botões fixos no rodapé da tela.", 13f, Estilo.TEXTO_2))
+        cbAutoPausa = CheckBox(this).apply {
+            text = "Pausar sozinho quando o SLAM se perder (conta 5 s, dá para cancelar)"
+            setTextColor(Estilo.TEXTO); textSize = 14f
+            isChecked = prefs.getBoolean("auto_pausa", true)
+            setOnCheckedChangeListener { _, v -> prefs.edit().putBoolean("auto_pausa", v).apply() }
+        }
+        cartaoLev.addView(cbAutoPausa)
+        cartaoLev.addView(Estilo.texto(this, "Iniciar, parar/pausar e gravar ponto de controle: botões fixos no rodapé da tela. " +
+            "Cada início leva a data e a hora no nome: repetir o nome não apaga o levantamento anterior.", 13f, Estilo.TEXTO_2))
         col.addView(cartaoLev)
 
         return ScrollView(this).apply { isFillViewport = false; addView(col); clipToPadding = false }.also { sv ->
