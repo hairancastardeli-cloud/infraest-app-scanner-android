@@ -18,6 +18,9 @@ levantamento (nome com data e hora; partes `_p2`, `_p3`…), pausa sozinho quand
   sem quadro) e ponto de retomada; limites calibrados com 2 testes reais, ainda **provisórios**.
 - `NuvemAcumulada.kt`, `Visualizador3D.kt`, `Nuvem3DActivity.kt` — prévia da nuvem (voxel de 10 cm, gravada em
   `logs_slam/nuvem_*.bin`) e visualizador 3D em OpenGL ES 2.0 (girar, mover, zoom).
+- `PontoGnss.kt`, `Geodesia.kt`, `AbaGnss.kt` — cadastro de pontos só com o RTK do scanner (braço da âncora ou bastão
+  rosqueado; duas leituras com o scanner girado 180° cancelam o afastamento da antena), UTM GRS80/SIRGAS 2000 e CSV
+  `logs_slam/pontos_rtk_<obra>.csv` no formato dos coletores.
 - `Semaforo.kt` — resumo verde/amarelo/vermelho do fim do levantamento (perdido, tremor, ambiente pobre, fechamento, GNSS × SLAM).
 - `Ntrip.kt`, `Gga.kt` — cliente NTRIP (mountpoints, correções RTCM) e leitura de GGA/GST.
 - `MainActivity.kt`, `Estilo.kt`, `VistaTopo.kt` — interface, tema e vista de cima do caminho. `Diagnostico.kt`, `Equipamento.kt` — registros.

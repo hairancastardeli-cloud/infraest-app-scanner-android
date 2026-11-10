@@ -92,6 +92,10 @@ class MainActivity : Activity() {
     private lateinit var btAbaNuvem: Button
     private lateinit var listaNuvens: LinearLayout
     private var nuvemGravadaMs = 0L
+    private lateinit var abaGnssVista: ScrollView
+    private lateinit var btAbaGnss: Button
+    private lateinit var abaGnss: AbaGnss
+    private var modoGnss = false                // scanner iniciado só para o GNSS mandar posição (alarme do SLAM desligado)
     private lateinit var barraAbas: LinearLayout
 
     // levantamento
@@ -156,7 +160,7 @@ class MainActivity : Activity() {
             override fun run() {
                 diag.gravar(getExternalFilesDir("logs_slam") ?: filesDir)
                 if (levantando) mostrarSlam(monitor.verificarAtraso())
-                atualizarRtkContadores(); atualizarTempo()
+                atualizarRtkContadores(); atualizarTempo(); abaGnss.tique()
                 ui.postDelayed(this, 1000)
             }
         }, 1000)
@@ -266,7 +270,8 @@ class MainActivity : Activity() {
     }
 
     override fun onBackPressed() {
-        if (abaRtk.visibility == View.VISIBLE || abaNuvem.visibility == View.VISIBLE) mostrarAba(false) else super.onBackPressed()
+        if (abaRtk.visibility == View.VISIBLE || abaNuvem.visibility == View.VISIBLE || abaGnssVista.visibility == View.VISIBLE) mostrarAba(false)
+        else super.onBackPressed()
     }
 
     // ------------------------------------------------------------------ mensagens do scanner
@@ -276,6 +281,7 @@ class MainActivity : Activity() {
         diag.gga(texto, g != null)
         if (g != null) {
             monitor.gnss(g.lat, g.lon, g.qualidade)
+            abaGnss.aoGga(g)
             ui.post { mostrarGnss(g, texto) }
         }
     }
@@ -336,13 +342,31 @@ class MainActivity : Activity() {
         iniciarLevantamento(pausado)
     }
 
+    /** Aba GNSS: o scanner só manda o GGA depois de iniciar; inicia um levantamento "<obra>_gnss" com o alarme do SLAM desligado. */
+    private fun ligarGnss() {
+        if (!equip.conectado) { toast("Conecte o scanner antes (aba Levantamento)"); return }
+        if (levantando) return
+        if (pausado) { toast("Há um levantamento pausado: continue ou encerre antes"); return }
+        val falta = pendenciasDoScanner()
+        if (falta.isNotEmpty()) {
+            AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert).setTitle("O scanner ainda não está pronto")
+                .setMessage(falta.joinToString("\n") { "• $it" }).setPositiveButton("Ok", null).show()
+            return
+        }
+        iniciarLevantamento(gnss = true)
+    }
+
     /**
      * Inicia um levantamento novo ou, se [continuacao], a parte seguinte do mesmo. O nome mandado ao scanner leva a data e
      * a hora (como o FireEye faz: "<nome>-MMddHHmm"); sem isso, um levantamento novo com o mesmo nome SOBRESCREVIA o
      * anterior no cartão do scanner. Partes: "<nome>_p2-…", "<nome>_p3-…" (o processador junta as partes do mesmo nome).
      */
-    private fun iniciarLevantamento(continuacao: Boolean = false) {
-        if (!continuacao || sessaoBase.isEmpty()) {
+    private fun iniciarLevantamento(continuacao: Boolean = false, gnss: Boolean = false) {
+        modoGnss = gnss
+        if (gnss) {
+            sessaoBase = PontoGnss.limpar(prefs.getString("gnss_obra", "") ?: "").ifEmpty { "pontos" } + "_gnss"
+            parte = 1; partes.clear()
+        } else if (!continuacao || sessaoBase.isEmpty()) {
             sessaoBase = etProjeto.edit.text.toString().trim().ifEmpty { "levantamento" }.replace(Regex("[^A-Za-z0-9_-]"), "_")
             prefs.edit().putString("projeto", sessaoBase).apply()
             parte = 1; partes.clear()
@@ -364,6 +388,13 @@ class MainActivity : Activity() {
     }
 
     private fun pararLevantamento() {
+        if (modoGnss) {
+            AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert).setTitle("Desligar o GNSS?")
+                .setMessage("Para o scanner: o GNSS deixa de mandar posição. Os pontos já salvos ficam no arquivo da obra.")
+                .setPositiveButton("Desligar") { _, _ -> desligarGnss() }
+                .setNegativeButton("Voltar", null).show()
+            return
+        }
         AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert).setTitle("Parar o levantamento?")
             .setMessage("Pausar: para agora e continua depois numa parte nova (o processador junta as partes).\nEncerrar: termina e mostra o resumo.")
             .setPositiveButton("Encerrar") { _, _ -> encerrar() }
@@ -400,6 +431,14 @@ class MainActivity : Activity() {
             .setPositiveButton("Entendi", null).show()
     }
 
+    /** Fim do modo GNSS: para o scanner sem resumo do SLAM (o levantamento "_gnss" não é para processar). */
+    private fun desligarGnss() {
+        fecharParte(); partes.clear()
+        modoGnss = false; pausado = false
+        atualizarBotoes(); atualizarPreparo(); mostrarSlam(monitor.situacao)
+        abaGnss.tique()
+    }
+
     private fun encerrar() {
         dialogoContagem?.dismiss(); dialogoContagem = null
         fecharParte()
@@ -429,6 +468,10 @@ class MainActivity : Activity() {
 
     private fun atualizarBotoes() {
         when {
+            levantando && modoGnss -> {
+                btIniciar.text = "Desligar o GNSS"; Estilo.aplicarTipo(this, btIniciar, Estilo.TipoBotao.PERIGO)
+                btPonto.text = "Ponto de controle"; Estilo.aplicarTipo(this, btPonto, Estilo.TipoBotao.CONTORNO)
+            }
             levantando -> {
                 btIniciar.text = "Parar levantamento"; Estilo.aplicarTipo(this, btIniciar, Estilo.TipoBotao.PERIGO)
                 btPonto.text = "Ponto de controle"; Estilo.aplicarTipo(this, btPonto, Estilo.TipoBotao.CONTORNO)
@@ -614,6 +657,13 @@ class MainActivity : Activity() {
         numPontos.valor.text = if (s.pontos > 0) "%,d".format(s.pontos).replace(',', '.') else "—"
         numQuadros.valor.text = "%.1f /s".format(s.quadrosPorS)
         numAndado.valor.text = "%.0f m".format(s.distanciaTotal)
+        if (modoGnss && levantando) {                          // só o GNSS interessa: sem alarme nem pausa automática do SLAM
+            faixaSlam.background = Estilo.forma(this, Estilo.SUPERFICIE_2, 18)
+            tvSlamTitulo.text = "Modo GNSS (scanner ligado)"; tvSlamTitulo.setTextColor(Estilo.TEXTO)
+            tvSlamMotivo.text = "Alarme do SLAM desligado. Pontos na aba GNSS; para desligar, botão do rodapé."
+            tvSlamMotivo.setTextColor(Estilo.TEXTO_2)
+            return
+        }
         alarme(s)
         if (levantando && s.perdidoPose && cbAutoPausa.isChecked && System.currentTimeMillis() > autoPausaSuprimidaAte)
             contagemAutoPausa(s.motivo)
@@ -767,14 +817,18 @@ class MainActivity : Activity() {
         btAbaLev = botaoAba("Levantamento") { mostrarAba(false) }
         btAbaRtk = botaoAba("RTK") { mostrarAba(true) }
         btAbaNuvem = botaoAba("Nuvem 3D") { mostrarAba(false, nuvem = true) }
-        barraAbas.addView(btAbaLev, LinearLayout.LayoutParams(0, dp(44), 1f).apply { rightMargin = dp(6) })
-        barraAbas.addView(btAbaRtk, LinearLayout.LayoutParams(0, dp(44), 1f).apply { rightMargin = dp(6) })
-        barraAbas.addView(btAbaNuvem, LinearLayout.LayoutParams(0, dp(44), 1f))
+        btAbaGnss = botaoAba("GNSS") { mostrarAba(false, gnss = true) }
+        barraAbas.addView(btAbaLev, LinearLayout.LayoutParams(0, dp(44), 1.4f).apply { rightMargin = dp(6) })
+        barraAbas.addView(btAbaRtk, LinearLayout.LayoutParams(0, dp(44), 0.8f).apply { rightMargin = dp(6) })
+        barraAbas.addView(btAbaNuvem, LinearLayout.LayoutParams(0, dp(44), 1.1f).apply { rightMargin = dp(6) })
+        barraAbas.addView(btAbaGnss, LinearLayout.LayoutParams(0, dp(44), 0.9f))
         raiz.addView(barraAbas)
 
         val conteudo = FrameLayout(this)
         abaLevantamento = montarAbaLevantamento(); abaRtk = montarAbaRtk(); abaNuvem = montarAbaNuvem()
-        conteudo.addView(abaLevantamento); conteudo.addView(abaRtk); conteudo.addView(abaNuvem)
+        abaGnss = AbaGnss(this, prefs, pastaLogs(), ::ligarGnss, { levantando }, ::apito)
+        abaGnssVista = abaGnss.montar().also { focoVisivel(it, abaGnss.campos) }
+        conteudo.addView(abaLevantamento); conteudo.addView(abaRtk); conteudo.addView(abaNuvem); conteudo.addView(abaGnssVista)
         raiz.addView(conteudo, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 
         // ---- barra de ação fixa: tempo, iniciar/parar e ponto de controle sempre à mão
@@ -965,12 +1019,13 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun mostrarAba(rtk: Boolean, nuvem: Boolean = false) {
-        val lev = !rtk && !nuvem
+    private fun mostrarAba(rtk: Boolean, nuvem: Boolean = false, gnss: Boolean = false) {
+        val lev = !rtk && !nuvem && !gnss
         abaLevantamento.visibility = if (lev) View.VISIBLE else View.GONE
         abaRtk.visibility = if (rtk) View.VISIBLE else View.GONE
         abaNuvem.visibility = if (nuvem) View.VISIBLE else View.GONE
-        pintarAba(btAbaLev, lev); pintarAba(btAbaRtk, rtk); pintarAba(btAbaNuvem, nuvem)
+        abaGnssVista.visibility = if (gnss) View.VISIBLE else View.GONE
+        pintarAba(btAbaLev, lev); pintarAba(btAbaRtk, rtk); pintarAba(btAbaNuvem, nuvem); pintarAba(btAbaGnss, gnss)
         if (nuvem) atualizarListaNuvens()
         esconderTeclado()
     }
@@ -1037,7 +1092,9 @@ class MainActivity : Activity() {
     }
 
     private fun botaoAba(t: String, acao: () -> Unit) = Button(this).apply {
-        text = t; isAllCaps = false; textSize = 15f; stateListAnimator = null; elevation = 0f
+        text = t; isAllCaps = false; textSize = 14f; stateListAnimator = null; elevation = 0f
+        isSingleLine = true; setPadding(dp(2), 0, dp(2), 0)
+        setAutoSizeTextTypeUniformWithConfiguration(10, 14, 1, android.util.TypedValue.COMPLEX_UNIT_SP)   // 4 abas em tela estreita
         typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
         setOnClickListener { acao() }
     }

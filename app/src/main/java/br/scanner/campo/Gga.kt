@@ -4,7 +4,12 @@ package br.scanner.campo
 data class Gga(
     val qualidade: Int, val satelites: Int, val hdop: Double?, val idadeCorrecao: Double?, val altitude: Double?,
     val lat: Double? = null, val lon: Double? = null,          // graus decimais (sul e oeste negativos)
+    val separacao: Double? = null,                             // ondulação do geoide do receptor (altitude + separação = h elipsoidal)
+    val hora: String = "",                                     // hhmmss.ss UTC (separa épocas repetidas)
 ) {
+    /** Altura elipsoidal (m): a altitude do GGA mais a separação do geoide que o próprio receptor usa. */
+    val alturaElipsoidal: Double? get() = altitude?.let { it + (separacao ?: 0.0) }
+
 
     fun nomeSolucao(): String = when (qualidade) {
         0 -> "Sem posição"; 1 -> "Autônomo"; 2 -> "DGPS"; 4 -> "RTK fixo"; 5 -> "RTK flutuante"; 6 -> "Estimado"; else -> "Qualidade $qualidade"
@@ -36,7 +41,7 @@ data class Gga(
             return Gga(
                 qualidade = c[6].toIntOrNull() ?: 0, satelites = c[7].toIntOrNull() ?: 0, hdop = c[8].toDoubleOrNull(),
                 altitude = c[9].toDoubleOrNull(), idadeCorrecao = c[13].toDoubleOrNull(),
-                lat = grau(c[2], c[3], 2), lon = grau(c[4], c[5], 3),
+                lat = grau(c[2], c[3], 2), lon = grau(c[4], c[5], 3), separacao = c[11].toDoubleOrNull(), hora = c[1],
             )
         }
 

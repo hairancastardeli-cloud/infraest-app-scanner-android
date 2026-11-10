@@ -1,6 +1,27 @@
-SCANNER CAMPO 0.8 — app Android próprio para o scanner GeoSun (GS-102G)
+SCANNER CAMPO 0.9 — app Android próprio para o scanner GeoSun (GS-102G)
 =====================================================================
 Feito a partir da leitura do FireEye 3.2.0 (protocolo do scanner). Não usa nem altera o app da GeoSun.
+
+NOVIDADES DA 0.9
+  - ABA "GNSS": cadastro de pontos só com o RTK do scanner, como num receptor de topografia.
+      * O scanner só manda a posição DEPOIS DE INICIAR: "Ligar o GNSS" inicia o scanner (grava "<obra>_gnss" no
+        cartão) com o alarme e a pausa automática do SLAM desligados. Desliga pelo botão do rodapé. RTK pela aba RTK.
+      * Suporte: BRAÇO DA ÂNCORA (ponta → antena 0,253 m, do .pro do GS-102G) ou BASTÃO ROSQUEADO embaixo (altura
+        do bastão + rosca → antena, medida por você uma vez e guardada).
+      * A antena NÃO fica na vertical da ponta, e o GNSS sozinho não sabe para onde o scanner aponta. Por isso cada
+        ponto tem DUAS leituras: leitura 1; depois GIRE O SCANNER 180° em volta da ponta, sem tirá-la do ponto,
+        nivele e faça a leitura 2. O ponto é a média das duas (o afastamento da antena se cancela).
+      * Cada leitura junta as épocas de RTK FIXO pelo tempo escolhido (padrão 10 s; flutuante só se marcar). Sem fixo
+        por 20 s a leitura é cancelada com 3 apitos.
+      * O resultado mostra E, N, cota, h elipsoidal, oscilação, o AFASTAMENTO da antena medido e a diferença de altura
+        entre as leituras, e avisa se não girou, se a ponta saiu do ponto ou se o scanner não estava nivelado igual.
+      * Coordenadas UTM no referencial da correção (caster da RBMC = SIRGAS 2000), fuso automático. Cota = altitude
+        do GGA (geoide do próprio receptor, não o MAPGEO); a h elipsoidal vai junto no arquivo.
+      * Arquivo por obra: logs_slam/pontos_rtk_<obra>.csv, no formato dos coletores (Name, Easting, Northing,
+        Elevation, Feature code…), lido direto pelo Gerador (descrição começando com PC = ponto de controle).
+        "Compartilhar o CSV" manda o arquivo como texto (WhatsApp, e-mail…). Toque longo num ponto apaga.
+    ANTES DE USAR EM SERVIÇO: meça um marco conhecido com o braço e com o bastão. Confira a cota (acerta a medida
+    rosca → antena) e anote o afastamento que o app mostra (confere o braço da antena).
 
 NOVIDADES DA 0.8
   - ABA "NUVEM 3D": prévia da nuvem em 3D. Durante o levantamento o app junta os pontos que o scanner manda (um a
@@ -35,7 +56,7 @@ NOVIDADES DA 0.7
   - Mapa: trechos em atenção em laranja, perdido em vermelho.
 
 INSTALAR NO CELULAR
-  1. Mande o arquivo ScannerCampo-0.8.apk para o celular (cabo USB, Drive, WhatsApp).
+  1. Mande o arquivo ScannerCampo-0.9.apk para o celular (cabo USB, Drive, WhatsApp).
   2. Abra o arquivo no celular. O Android pede para permitir "instalar apps desconhecidos" para o app que
      abriu o arquivo (Arquivos, Chrome, WhatsApp…): permita e instale.
   3. O FireEye e o Scanner Campo NÃO devem ficar conectados ao scanner ao mesmo tempo: feche o FireEye antes.
