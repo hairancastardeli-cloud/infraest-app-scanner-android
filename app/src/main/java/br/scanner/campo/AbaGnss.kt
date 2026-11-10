@@ -230,7 +230,7 @@ class AbaGnss(
         val aux = estadoAuxiliar.let { if (it.isEmpty()) "" else "\n$it" }
         when {
             g == null || idade > 5 -> {
-                tvSituacao.text = (if (!iniciado) "Sem posição. Conecte o scanner e toque em Ligar o GNSS."
+                tvSituacao.text = (if (!iniciado) "Sem posição. Toque em Ligar o GNSS (conecta ao scanner sozinho, se preciso)."
                     else if (g == null) "Aguardando a primeira posição do receptor…"
                     else "Sem posição nova há %.0f s.".format(idade)) + aux
                 tvSituacao.setTextColor(if (iniciado) Estilo.ATENCAO else Estilo.TEXTO_2)

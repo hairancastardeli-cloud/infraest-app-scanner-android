@@ -49,6 +49,7 @@ class MainActivity : Activity() {
     private var buscandoScanner = false
     private var redeScanner: android.net.Network? = null
     private var aux: AuxiliarGnss? = null          // GNSS sem levantamento (script no scanner, via adb)
+    private var ligarGnssAoConectar = false        // "Ligar o GNSS" tocado com o scanner desconectado
     private var sondando = false
 
     // preparo do scanner (o FireEye só deixa iniciar depois disso): parâmetros, calibração do lidar e checagem do sistema
@@ -150,6 +151,7 @@ class MainActivity : Activity() {
         conector = ConectorScanner(this)
         equip = Equipamento(::aoMensagem) { ok, txt ->
             ui.post {
+                if (ok && ligarGnssAoConectar) ligarGnss()
                 if (ok) pintaScanner("Conectado", Estilo.OK, subPreparo())
                 else if (equip.ativo) pintaScanner("Reconectando…", Estilo.ATENCAO, txt.take(36))
                 else pintaScanner("Desconectado", Estilo.NEUTRO, "")
@@ -190,7 +192,7 @@ class MainActivity : Activity() {
     }
 
     private fun desconectarScanner() {
-        buscandoScanner = false
+        buscandoScanner = false; ligarGnssAoConectar = false
         aux?.parar(); aux = null
         conector.liberar(); equip.parar()
         btConectarScanner.text = "Conectar ao scanner"; Estilo.aplicarTipo(this, btConectarScanner, Estilo.TipoBotao.CHEIO)
@@ -333,6 +335,7 @@ class MainActivity : Activity() {
 
     private fun falhaScanner(motivo: String) {
         buscandoScanner = false
+        if (ligarGnssAoConectar) { ligarGnssAoConectar = false; abaGnss.estadoAuxiliar = "não conectou ao scanner: $motivo"; abaGnss.tique() }
         btConectarScanner.text = "Conectar ao scanner"; Estilo.aplicarTipo(this, btConectarScanner, Estilo.TipoBotao.CHEIO)
         pintaScanner("Desconectado", Estilo.ERRO, "falhou")
         statusScanner("Não conectou: $motivo", Estilo.ERRO)
@@ -417,7 +420,13 @@ class MainActivity : Activity() {
      */
     private fun ligarGnss() {
         val rede = redeScanner
-        if (!equip.conectado || rede == null) { toast("Conecte o scanner antes (aba Levantamento)"); return }
+        if (!equip.conectado || rede == null) {                     // conecta primeiro e liga o GNSS quando o scanner responder
+            ligarGnssAoConectar = true
+            abaGnss.estadoAuxiliar = "conectando ao scanner…"; abaGnss.tique()
+            if (!buscandoScanner && !equip.ativo) conectarScanner()
+            return
+        }
+        ligarGnssAoConectar = false
         if (levantando) { toast("O levantamento em andamento já manda a posição"); return }
         if (aux?.ativo == true) return
         val script = try { assets.open("scanner_campo_gnss.py").use { String(it.readBytes(), Charsets.UTF_8) } }
