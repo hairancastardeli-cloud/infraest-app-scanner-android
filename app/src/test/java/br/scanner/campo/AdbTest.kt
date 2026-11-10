@@ -79,4 +79,13 @@ class AdbTest {
             }
         }
     }
+
+    @Test fun investigacaoDuranteOLevantamentoNaoLeAsSeriais() {
+        for ((_, cmd) in InvestigacaoGnss.COMANDOS_LEVANTANDO) assertTrue(cmd, !cmd.contains("cat \$t") && !cmd.contains("cat /dev/tty"))
+        ServerSocket(0, 5, InetAddress.getLoopbackAddress()).use { srv ->
+            adbdFalso(srv)
+            val r = InvestigacaoGnss.rodar(SocketFactory.getDefault(), "127.0.0.1", srv.localPort, InvestigacaoGnss.COMANDOS_LEVANTANDO)
+            for ((titulo, _) in InvestigacaoGnss.COMANDOS_LEVANTANDO) assertTrue(titulo, r.contains("### $titulo"))
+        }
+    }
 }

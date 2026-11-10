@@ -300,17 +300,21 @@ class MainActivity : Activity() {
     private fun investigarGnss() {
         val rede = redeScanner
         if (rede == null || !equip.conectado) { toast("Conecte o scanner antes"); return }
-        if (levantando) { toast("Pare o levantamento antes: a investigação lê as seriais do GNSS"); return }
+        if (levantando && respostaInicioMs == 0L) { toast("Espere o scanner confirmar o início"); return }
         if (sondando) { toast("Já está rodando"); return }
+        // parado: lê também 2 s das seriais; levantando: só contadores e configuração (não rouba os dados do pos)
+        val comandos = if (levantando) InvestigacaoGnss.COMANDOS_LEVANTANDO else InvestigacaoGnss.COMANDOS
+        val quando = if (levantando) "durante o levantamento" else "com o levantamento parado"
         sondando = true
         val dlg = AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert).setTitle("Investigando o GNSS…")
             .setMessage("Conectando no adb do scanner (só leitura)…").setCancelable(false).show()
         Thread({
             val txt = try {
-                InvestigacaoGnss.rodar(rede.socketFactory, ConectorScanner.IP) { t -> ui.post { dlg.setMessage("Lendo: $t…") } }
+                InvestigacaoGnss.rodar(rede.socketFactory, ConectorScanner.IP, comandos = comandos) { t -> ui.post { dlg.setMessage("Lendo: $t…") } }
             } catch (e: Exception) { "Falhou: ${e.message ?: e.javaClass.simpleName}" }
-            val cab = "Investigação do GNSS do scanner (só leitura) em " + SimpleDateFormat("dd/MM/yyyy HH:mm:ss", Locale.US).format(Date()) + "\n"
-            try { File(pastaLogs(), "investigacao_gnss.txt").writeText(cab + txt) } catch (_: Exception) { }
+            val cab = "Investigação do GNSS do scanner (só leitura, $quando; RTK ${if (ntrip.conectado) "ligado" else "desligado"}) em " +
+                SimpleDateFormat("dd/MM/yyyy HH:mm:ss", Locale.US).format(Date()) + "\n"
+            try { File(pastaLogs(), if (levantando) "investigacao_gnss_levantando.txt" else "investigacao_gnss.txt").writeText(cab + txt) } catch (_: Exception) { }
             ui.post {
                 sondando = false; dlg.dismiss()
                 AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert).setTitle("Investigação do GNSS")
