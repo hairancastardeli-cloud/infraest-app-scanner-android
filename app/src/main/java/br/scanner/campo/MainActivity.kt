@@ -452,7 +452,10 @@ class MainActivity : Activity() {
     /** Linha NMEA do auxiliar: GGA segue o mesmo caminho do GGA do levantamento; GST alimenta a precisão. */
     private fun aoLinhaAuxiliar(l: String) {
         when {
-            l.contains("GGA,") -> aoGga(l)
+            l.contains("GGA,") -> {
+                aoGga(l)
+                if (abaGnss.estadoAuxiliar.startsWith("auxiliar ligado")) abaGnss.estadoAuxiliar = "GNSS sem levantamento (auxiliar no scanner)"
+            }
             l.contains("GST,") -> Gst.ler(l)?.let { ultimoGst = it; ultimoGstMs = System.currentTimeMillis() }
             l.startsWith("\$command") -> diag.nota("receptor: " + l.take(120))
         }
