@@ -1,6 +1,15 @@
-SCANNER CAMPO 0.9 — app Android próprio para o scanner GeoSun (GS-102G)
+SCANNER CAMPO 0.9.1 — app Android próprio para o scanner GeoSun (GS-102G)
 =====================================================================
 Feito a partir da leitura do FireEye 3.2.0 (protocolo do scanner). Não usa nem altera o app da GeoSun.
+
+NOVIDADES DA 0.9.1
+  - Cartão Scanner > "Sondar o scanner (portas de rede)": testa as portas TCP do scanner (só abre e fecha, não manda
+    nada; o 8080 do app fica de fora) e grava logs_slam/sonda_scanner.txt. Serve para achar um acesso (adb por Wi-Fi,
+    SSH…) que permita ligar o GNSS sem iniciar o levantamento: no software de fábrica a posição só chega depois de
+    iniciar (o DataManager só abre o programa "pos", que lê o receptor, no início do levantamento).
+  - ATENÇÃO, altura da antena: o cabeçalho do .lid grava o braço da antena como R −0,024 / F 0,359 / U 0,319 m, diferente
+    do .pro (U 0,04). Ponta do braço → antena pode ser 0,253 m (valor do app) ou ~0,53 m. Confira num marco antes de
+    confiar na cota medida com o braço.
 
 NOVIDADES DA 0.9
   - ABA "GNSS": cadastro de pontos só com o RTK do scanner, como num receptor de topografia.
@@ -56,7 +65,7 @@ NOVIDADES DA 0.7
   - Mapa: trechos em atenção em laranja, perdido em vermelho.
 
 INSTALAR NO CELULAR
-  1. Mande o arquivo ScannerCampo-0.9.apk para o celular (cabo USB, Drive, WhatsApp).
+  1. Mande o arquivo ScannerCampo-0.9.1.apk para o celular (cabo USB, Drive, WhatsApp).
   2. Abra o arquivo no celular. O Android pede para permitir "instalar apps desconhecidos" para o app que
      abriu o arquivo (Arquivos, Chrome, WhatsApp…): permita e instale.
   3. O FireEye e o Scanner Campo NÃO devem ficar conectados ao scanner ao mesmo tempo: feche o FireEye antes.

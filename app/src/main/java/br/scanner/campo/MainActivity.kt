@@ -47,6 +47,8 @@ class MainActivity : Activity() {
     private lateinit var btConectarScanner: Button
     private lateinit var tvScanner: TextView
     private var buscandoScanner = false
+    private var redeScanner: android.net.Network? = null
+    private var sondando = false
 
     // preparo do scanner (o FireEye só deixa iniciar depois disso): parâmetros, calibração do lidar e checagem do sistema
     private lateinit var tvPreparo: TextView
@@ -258,8 +260,37 @@ class MainActivity : Activity() {
         paramsOk = false; csvOk = false; firmware = ""; checagem = IntArray(Protocolo.ITENS_CHECAGEM.size) { -1 }; checagemRecebida = false
         atualizarPreparo()
         prefs.edit().putString("ultimo_ssid", nome).apply()
+        redeScanner = rede
         statusScanner("Wi-Fi do scanner conectado ($nome). Abrindo a conexão…", Estilo.TEXTO_2)
         equip.iniciar(rede)
+    }
+
+    /** Testa todas as portas TCP do scanner (só abre e fecha) e grava o resultado em logs_slam/sonda_scanner.txt. */
+    private fun sondarScanner() {
+        val rede = redeScanner
+        if (rede == null || !equip.conectado) { toast("Conecte o scanner antes"); return }
+        if (sondando) { toast("A sonda já está rodando"); return }
+        sondando = true
+        val dlg = AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert).setTitle("Sondando o scanner…")
+            .setMessage("Testando as portas de rede do scanner (só leitura). Leva até 1–2 minutos.").setCancelable(false).show()
+        Thread({
+            val abertas = try {
+                // o 8080 fica de fora: uma 2ª conexão no DataManager poderia derrubar a do app
+                Sonda.varrer(rede.socketFactory, ConectorScanner.IP, pular = setOf(ConectorScanner.PORTA)) { n, t -> ui.post { dlg.setMessage("Testando as portas de rede do scanner (só leitura).\n$n de $t") } }
+            } catch (e: Exception) { null }
+            val txt = abertas?.let { Sonda.relatorio(it) } ?: "a sonda falhou"
+            try {
+                File(pastaLogs(), "sonda_scanner.txt").writeText("Sonda das portas TCP de ${ConectorScanner.IP} em " +
+                    SimpleDateFormat("dd/MM/yyyy HH:mm:ss", Locale.US).format(Date()) + "\n$txt\n")
+            } catch (_: Exception) { }
+            diag.nota("sonda de portas: " + (abertas?.joinToString(",") ?: "falhou"))
+            ui.post {
+                sondando = false; dlg.dismiss()
+                AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert).setTitle("Portas abertas no scanner")
+                    .setMessage("$txt\n\nGravado em logs_slam/sonda_scanner.txt. Mande uma foto desta tela ou o arquivo.")
+                    .setPositiveButton("Ok", null).show()
+            }
+        }, "sonda").apply { isDaemon = true; start() }
     }
 
     private fun falhaScanner(motivo: String) {
@@ -898,6 +929,8 @@ class MainActivity : Activity() {
         cartaoScanner.addView(tvScanner)
         tvPreparo = Estilo.texto(this, "Preparo do scanner: aparece depois de conectar.", 13f, Estilo.TEXTO_2).apply { setPadding(dp(2), dp(10), dp(2), 0) }
         cartaoScanner.addView(tvPreparo)
+        cartaoScanner.addView(Estilo.espaco(this, 8))
+        cartaoScanner.addView(Estilo.botao(this, "Sondar o scanner (portas de rede)", Estilo.TipoBotao.CONTORNO) { sondarScanner() })
         col.addView(cartaoScanner)
 
         val cartaoNumeros = Estilo.cartao(this)
