@@ -293,6 +293,38 @@ class MainActivity : Activity() {
         }, "sonda").apply { isDaemon = true; start() }
     }
 
+    /**
+     * Roda pelo adb do scanner (Wi-Fi, porta 5555) os comandos SÓ DE LEITURA de [InvestigacaoGnss] e mostra o relatório
+     * para compartilhar. Só com o levantamento parado (lê 2 s das seriais do GNSS, que o "pos" usa durante o levantamento).
+     */
+    private fun investigarGnss() {
+        val rede = redeScanner
+        if (rede == null || !equip.conectado) { toast("Conecte o scanner antes"); return }
+        if (levantando) { toast("Pare o levantamento antes: a investigação lê as seriais do GNSS"); return }
+        if (sondando) { toast("Já está rodando"); return }
+        sondando = true
+        val dlg = AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert).setTitle("Investigando o GNSS…")
+            .setMessage("Conectando no adb do scanner (só leitura)…").setCancelable(false).show()
+        Thread({
+            val txt = try {
+                InvestigacaoGnss.rodar(rede.socketFactory, ConectorScanner.IP) { t -> ui.post { dlg.setMessage("Lendo: $t…") } }
+            } catch (e: Exception) { "Falhou: ${e.message ?: e.javaClass.simpleName}" }
+            val cab = "Investigação do GNSS do scanner (só leitura) em " + SimpleDateFormat("dd/MM/yyyy HH:mm:ss", Locale.US).format(Date()) + "\n"
+            try { File(pastaLogs(), "investigacao_gnss.txt").writeText(cab + txt) } catch (_: Exception) { }
+            ui.post {
+                sondando = false; dlg.dismiss()
+                AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert).setTitle("Investigação do GNSS")
+                    .setMessage(txt.take(6000) + if (txt.length > 6000) "\n…(continua no arquivo)" else "")
+                    .setPositiveButton("Compartilhar") { _, _ ->
+                        val i = android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain")
+                            .putExtra(android.content.Intent.EXTRA_SUBJECT, "investigacao_gnss.txt").putExtra(android.content.Intent.EXTRA_TEXT, cab + txt)
+                        startActivity(android.content.Intent.createChooser(i, "Compartilhar a investigação"))
+                    }
+                    .setNegativeButton("Fechar", null).show()
+            }
+        }, "investigacao").apply { isDaemon = true; start() }
+    }
+
     private fun falhaScanner(motivo: String) {
         buscandoScanner = false
         btConectarScanner.text = "Conectar ao scanner"; Estilo.aplicarTipo(this, btConectarScanner, Estilo.TipoBotao.CHEIO)
@@ -931,6 +963,7 @@ class MainActivity : Activity() {
         cartaoScanner.addView(tvPreparo)
         cartaoScanner.addView(Estilo.espaco(this, 8))
         cartaoScanner.addView(Estilo.botao(this, "Sondar o scanner (portas de rede)", Estilo.TipoBotao.CONTORNO) { sondarScanner() })
+        cartaoScanner.addView(Estilo.botao(this, "Investigar o GNSS (adb, só leitura)", Estilo.TipoBotao.CONTORNO) { investigarGnss() })
         col.addView(cartaoScanner)
 
         val cartaoNumeros = Estilo.cartao(this)
