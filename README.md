@@ -21,6 +21,9 @@ levantamento (nome com data e hora; partes `_p2`, `_p3`…), pausa sozinho quand
 - `PontoGnss.kt`, `Geodesia.kt`, `AbaGnss.kt` — cadastro de pontos só com o RTK do scanner (braço da âncora ou bastão
   rosqueado; duas leituras com o scanner girado 180° cancelam o afastamento da antena), UTM GRS80/SIRGAS 2000 e CSV
   `logs_slam/pontos_rtk_<obra>.csv` no formato dos coletores.
+- `AuxiliarGnss.kt` + `assets/scanner_campo_gnss.py`, `Adb.kt` — GNSS sem levantamento: script instalado pelo adb (Wi-Fi) em
+  `/tmp` do scanner, que configura o receptor (ttyS1, 460800) e serve o NMEA na porta 8081; solta a serial quando o `pos` roda.
+  `Sonda.kt`, `InvestigacaoGnss.kt` — portas e investigação só de leitura do scanner.
 - `Semaforo.kt` — resumo verde/amarelo/vermelho do fim do levantamento (perdido, tremor, ambiente pobre, fechamento, GNSS × SLAM).
 - `Ntrip.kt`, `Gga.kt` — cliente NTRIP (mountpoints, correções RTCM) e leitura de GGA/GST.
 - `MainActivity.kt`, `Estilo.kt`, `VistaTopo.kt` — interface, tema e vista de cima do caminho. `Diagnostico.kt`, `Equipamento.kt` — registros.

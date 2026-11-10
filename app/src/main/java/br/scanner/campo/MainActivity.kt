@@ -48,6 +48,7 @@ class MainActivity : Activity() {
     private lateinit var tvScanner: TextView
     private var buscandoScanner = false
     private var redeScanner: android.net.Network? = null
+    private var aux: AuxiliarGnss? = null          // GNSS sem levantamento (script no scanner, via adb)
     private var sondando = false
 
     // preparo do scanner (o FireEye só deixa iniciar depois disso): parâmetros, calibração do lidar e checagem do sistema
@@ -157,7 +158,7 @@ class MainActivity : Activity() {
                 Estilo.aplicarTipo(this, btConectarScanner, if (ok || equip.ativo) Estilo.TipoBotao.PERIGO else Estilo.TipoBotao.CHEIO)
             }
         }
-        ntrip = Ntrip(this, { rtcm -> equip.enviar(Protocolo.RTCM, rtcm) }) { est, txt -> ui.post { mostrarRtk(est, txt) } }
+        ntrip = Ntrip(this, { rtcm -> equip.enviar(Protocolo.RTCM, rtcm); aux?.enviarRtcm(rtcm) }) { est, txt -> ui.post { mostrarRtk(est, txt) } }
         ui.postDelayed(object : Runnable {
             override fun run() {
                 diag.gravar(getExternalFilesDir("logs_slam") ?: filesDir)
@@ -169,7 +170,7 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
-        ntrip.desconectar(); equip.parar(); conector.liberar(); monitor.parar()
+        aux?.parar(); ntrip.desconectar(); equip.parar(); conector.liberar(); monitor.parar()
         super.onDestroy()
     }
 
@@ -190,6 +191,7 @@ class MainActivity : Activity() {
 
     private fun desconectarScanner() {
         buscandoScanner = false
+        aux?.parar(); aux = null
         conector.liberar(); equip.parar()
         btConectarScanner.text = "Conectar ao scanner"; Estilo.aplicarTipo(this, btConectarScanner, Estilo.TipoBotao.CHEIO)
         statusScanner("Desconectado.", Estilo.TEXTO_2)
@@ -409,8 +411,52 @@ class MainActivity : Activity() {
         iniciarLevantamento(pausado)
     }
 
-    /** Aba GNSS: o scanner só manda o GGA depois de iniciar; inicia um levantamento "<obra>_gnss" com o alarme do SLAM desligado. */
+    /**
+     * Aba GNSS: liga o receptor SEM iniciar o levantamento, pelo auxiliar instalado via adb ([AuxiliarGnss]). Se ele
+     * falhar, oferece o modo antigo (iniciar o scanner só para o GNSS).
+     */
     private fun ligarGnss() {
+        val rede = redeScanner
+        if (!equip.conectado || rede == null) { toast("Conecte o scanner antes (aba Levantamento)"); return }
+        if (levantando) { toast("O levantamento em andamento já manda a posição"); return }
+        if (aux?.ativo == true) return
+        val script = try { assets.open("scanner_campo_gnss.py").use { String(it.readBytes(), Charsets.UTF_8) } }
+            catch (e: Exception) { toast("Script do auxiliar não encontrado no app"); return }
+        aux = AuxiliarGnss(rede.socketFactory, script, ::aoLinhaAuxiliar, aoEstado = { e, t ->
+            ui.post {
+                abaGnss.estadoAuxiliar = if (e == AuxiliarGnss.Estado.DESLIGADO) "" else t
+                diag.nota("auxiliar do GNSS: $e $t")
+                abaGnss.tique()
+                if (e == AuxiliarGnss.Estado.ERRO) {
+                    aux = null
+                    AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert).setTitle("O GNSS sem levantamento não ligou")
+                        .setMessage("$t\n\nDá para ligar o GNSS iniciando o scanner só para isso (grava um levantamento \"_gnss\" no cartão).")
+                        .setPositiveButton("Ligar pelo levantamento") { _, _ -> ligarGnssPeloLevantamento() }
+                        .setNegativeButton("Agora não", null).show()
+                }
+            }
+        })
+        aux?.iniciar()
+        abaGnss.tique()
+    }
+
+    /** Linha NMEA do auxiliar: GGA segue o mesmo caminho do GGA do levantamento; GST alimenta a precisão. */
+    private fun aoLinhaAuxiliar(l: String) {
+        when {
+            l.contains("GGA,") -> aoGga(l)
+            l.contains("GST,") -> Gst.ler(l)?.let { ultimoGst = it; ultimoGstMs = System.currentTimeMillis() }
+            l.startsWith("\$command") -> diag.nota("receptor: " + l.take(120))
+        }
+    }
+
+    /** Botão "Desligar o GNSS" da aba: o auxiliar, ou o levantamento do modo antigo. */
+    private fun desligarGnssAba() {
+        if (aux?.ativo == true) { aux?.parar(); aux = null; abaGnss.estadoAuxiliar = ""; abaGnss.tique(); return }
+        if (modoGnss && levantando) pararLevantamento()
+    }
+
+    /** Modo antigo: o scanner só manda o GGA depois de iniciar; inicia um levantamento "<obra>_gnss" com o alarme do SLAM desligado. */
+    private fun ligarGnssPeloLevantamento() {
         if (!equip.conectado) { toast("Conecte o scanner antes (aba Levantamento)"); return }
         if (levantando) return
         if (pausado) { toast("Há um levantamento pausado: continue ou encerre antes"); return }
@@ -893,7 +939,7 @@ class MainActivity : Activity() {
 
         val conteudo = FrameLayout(this)
         abaLevantamento = montarAbaLevantamento(); abaRtk = montarAbaRtk(); abaNuvem = montarAbaNuvem()
-        abaGnss = AbaGnss(this, prefs, pastaLogs(), ::ligarGnss, { levantando }, ::apito)
+        abaGnss = AbaGnss(this, prefs, pastaLogs(), ::ligarGnss, ::desligarGnssAba, { levantando || aux?.ativo == true }, ::apito)
         abaGnssVista = abaGnss.montar().also { focoVisivel(it, abaGnss.campos) }
         conteudo.addView(abaLevantamento); conteudo.addView(abaRtk); conteudo.addView(abaNuvem); conteudo.addView(abaGnssVista)
         raiz.addView(conteudo, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))

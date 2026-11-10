@@ -18,18 +18,21 @@ import br.scanner.campo.Estilo.dp
 import java.io.File
 
 /**
- * Aba GNSS: cadastro de pontos só com o RTK do scanner (ver [PontoGnss]). O scanner só manda o GGA depois de iniciar,
- * então o botão "Ligar o GNSS" inicia o scanner por baixo (grava um levantamento "<obra>_gnss" no cartão, com o alarme
- * do SLAM desligado). Cada ponto = leitura 1 + leitura 2 com o scanner girado 180° em volta da ponta.
+ * Aba GNSS: cadastro de pontos só com o RTK do scanner (ver [PontoGnss]). "Ligar o GNSS" liga o receptor SEM iniciar o
+ * levantamento ([AuxiliarGnss], pelo adb); se um levantamento estiver rodando, a posição vem dele.
+ * Cada ponto = leitura 1 + leitura 2 com o scanner girado 180° em volta da ponta.
  */
 class AbaGnss(
     private val act: Activity,
     private val prefs: SharedPreferences,
     private val pasta: File,
-    private val ligarScanner: () -> Unit,
-    private val scannerIniciado: () -> Boolean,
+    private val ligarGnss: () -> Unit,
+    private val desligarGnss: () -> Unit,
+    private val gnssLigado: () -> Boolean,
     private val apito: (Int) -> Unit,
 ) {
+    /** Texto do auxiliar do GNSS (instalando, ligado, erro…), mostrado na situação. */
+    @Volatile var estadoAuxiliar = ""
     private enum class Etapa { PARADO, LEITURA1, GIRAR, LEITURA2 }
 
     @Volatile private var ultimoGga: Gga? = null
@@ -41,6 +44,7 @@ class AbaGnss(
 
     private lateinit var tvSituacao: TextView
     private lateinit var btLigar: Button
+    private lateinit var btDesligar: Button
     private lateinit var etObra: Estilo.Campo
     private lateinit var tvArquivo: TextView
     private lateinit var btBraco: Button
@@ -81,10 +85,12 @@ class AbaGnss(
         cSit.addView(Estilo.tituloCartao(ctx, "GNSS do scanner"))
         tvSituacao = Estilo.texto(ctx, "", 14f, Estilo.TEXTO_2)
         cSit.addView(tvSituacao)
-        btLigar = Estilo.botao(ctx, "Ligar o GNSS (inicia o scanner)", Estilo.TipoBotao.CHEIO) { ligarScanner() }
+        btLigar = Estilo.botao(ctx, "Ligar o GNSS (sem levantamento)", Estilo.TipoBotao.CHEIO) { ligarGnss() }
         cSit.addView(btLigar)
-        cSit.addView(Estilo.texto(ctx, "O scanner só manda a posição depois de iniciar: este botão inicia o scanner (grava um " +
-            "levantamento \"<obra>_gnss\" no cartão) com o alarme do SLAM desligado. Para desligar, use o botão do rodapé. " +
+        btDesligar = Estilo.botao(ctx, "Desligar o GNSS", Estilo.TipoBotao.CONTORNO) { desligarGnss() }
+        cSit.addView(btDesligar)
+        cSit.addView(Estilo.texto(ctx, "Liga o receptor do scanner sem iniciar o levantamento (nada é gravado no cartão nem no " +
+            "scanner; um reinício volta tudo ao normal). Se você iniciar um levantamento, a posição passa a vir dele. " +
             "O RTK vem do caster da aba RTK.", 12f, Estilo.TEXTO_3).apply { setPadding(ctx.dp(2), ctx.dp(8), ctx.dp(2), 0) })
         col.addView(cSit)
 
@@ -188,7 +194,7 @@ class AbaGnss(
             Etapa.PARADO -> {
                 val (h, falta) = alturaAntena()
                 if (h == null) { toast(falta); return }
-                if (System.currentTimeMillis() - ultimoGgaMs > 3000) { toast("Sem posição do GNSS. Ligue o GNSS do scanner primeiro."); return }
+                if (System.currentTimeMillis() - ultimoGgaMs > 3000) { toast("Sem posição do GNSS. Toque em Ligar o GNSS primeiro."); return }
                 prefs.edit().putString("gnss_braco", etBraco.edit.text.toString().trim()).putString("gnss_bastao", etBastao.edit.text.toString().trim())
                     .putString("gnss_rosca", etRosca.edit.text.toString().trim()).putInt("gnss_tempo", tempo())
                     .putString("gnss_obra", etObra.edit.text.toString().trim()).apply()
@@ -218,18 +224,20 @@ class AbaGnss(
         val agora = System.currentTimeMillis()
         val g = ultimoGga
         val idade = (agora - ultimoGgaMs) / 1000.0
-        val iniciado = scannerIniciado()
+        val iniciado = gnssLigado()
         btLigar.visibility = if (iniciado) View.GONE else View.VISIBLE
+        btDesligar.visibility = if (iniciado) View.VISIBLE else View.GONE
+        val aux = estadoAuxiliar.let { if (it.isEmpty()) "" else "\n$it" }
         when {
             g == null || idade > 5 -> {
-                tvSituacao.text = if (!iniciado) "Sem posição: o GNSS do scanner só manda posição depois de iniciar. Conecte o scanner e toque em Ligar o GNSS."
-                    else if (g == null) "Scanner iniciado; aguardando a primeira posição do GNSS…"
-                    else "Sem posição nova há %.0f s.".format(idade)
+                tvSituacao.text = (if (!iniciado) "Sem posição. Conecte o scanner e toque em Ligar o GNSS."
+                    else if (g == null) "Aguardando a primeira posição do receptor…"
+                    else "Sem posição nova há %.0f s.".format(idade)) + aux
                 tvSituacao.setTextColor(if (iniciado) Estilo.ATENCAO else Estilo.TEXTO_2)
             }
             else -> {
                 val corr = g.idadeCorrecao?.let { " · correção há ${f(it, 0)} s" } ?: ""
-                tvSituacao.text = "${g.nomeSolucao()} · ${g.satelites} satélites" + (g.hdop?.let { " · HDOP ${f(it, 1)}" } ?: "") + corr
+                tvSituacao.text = "${g.nomeSolucao()} · ${g.satelites} satélites" + (g.hdop?.let { " · HDOP ${f(it, 1)}" } ?: "") + corr + aux
                 tvSituacao.setTextColor(when (g.qualidade) { 4 -> Estilo.OK; 5 -> Estilo.ATENCAO; else -> Estilo.ERRO })
             }
         }
