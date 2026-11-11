@@ -17,7 +17,7 @@ levantamento (nome com data e hora; partes `_p2`, `_p3`…), pausa sozinho quand
 - `MonitorSlam.kt` — alarme do SLAM (posição tremendo, ambiente pobre contra o normal do levantamento, velocidade/salto, tempo
   sem quadro) e ponto de retomada; limites calibrados com 2 testes reais, ainda **provisórios**.
 - `NuvemAcumulada.kt`, `Visualizador3D.kt`, `Nuvem3DActivity.kt` — prévia da nuvem (voxel de 10 cm, gravada em
-  `logs_slam/nuvem_*.bin`) e visualizador 3D em OpenGL ES 2.0 (girar, mover, zoom).
+  `logs_slam/nuvem_*.bin`) e visualizador 3D em OpenGL ES 2.0 (girar, mover, zoom); `Telhado.kt` tira o teto da visão (camada de cima com vão embaixo).
 - `PontoGnss.kt`, `Geodesia.kt`, `AbaGnss.kt` — cadastro de pontos só com o RTK do scanner (braço da âncora ou bastão
   rosqueado; duas leituras com o scanner girado 180° cancelam o afastamento da antena), UTM GRS80/SIRGAS 2000 e CSV
   `logs_slam/pontos_rtk_<obra>.csv` no formato dos coletores.

@@ -33,6 +33,9 @@ class Nuvem3DActivity : Activity() {
     private var aoVivo = false
     private var versaoMostrada = -1
     private var primeira = true
+    private var original: FloatArray? = null
+    private var semTelhado = false
+    private lateinit var btTelhado: Button
 
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
@@ -65,9 +68,9 @@ class Nuvem3DActivity : Activity() {
         }
         bt("Inicial") { vista.vistaInicial() }
         bt("Topo") { vista.vistaTopo() }
+        btTelhado = bt("Sem teto") { alternarTelhado() }
         bt("Ponto+") { vista.tamanhoPonto = (vista.tamanhoPonto + 1f).coerceAtMost(8f) }
         bt("Ponto−") { vista.tamanhoPonto = (vista.tamanhoPonto - 1f).coerceAtLeast(1f) }
-        bt("Fechar") { finish() }
         raiz.addView(barra, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))
         setContentView(raiz)
         // Android 15 desenha por baixo das barras do sistema: o título desce abaixo do relógio e os botões sobem acima da
@@ -94,12 +97,32 @@ class Nuvem3DActivity : Activity() {
         }
     }
 
+    /** Guarda a nuvem inteira e mostra com ou sem o telhado, conforme o botão. */
     private fun mostrar(xyz: FloatArray, reenquadrar: Boolean) {
+        original = xyz
+        if (!semTelhado) { exibir(xyz, reenquadrar, 0); return }
+        trabalho.execute {
+            val r = Telhado.remover(xyz)
+            ui.post { if (original === xyz) exibir(r.xyz, reenquadrar, r.removidos) }
+        }
+    }
+
+    private fun exibir(xyz: FloatArray, reenquadrar: Boolean, removidos: Int) {
         vista.definirPontos(xyz, reenquadrar)
         val n = xyz.size / 3
-        info.text = "%,d pontos (1 a cada 10 cm) · 1 dedo gira · 2 dedos movem e dão zoom · toque duplo volta".format(n).replace(',', '.') +
-            if (aoVivo) " · atualiza sozinho" else ""
+        info.text = "%,d pontos (1 a cada 10 cm)".format(n).replace(',', '.') +
+            (if (semTelhado) " · sem teto (%,d tirados)".format(removidos).replace(',', '.') else "") +
+            " · 1 dedo gira · 2 dedos movem e dão zoom · toque duplo volta" + if (aoVivo) " · atualiza sozinho" else ""
         info.setTextColor(Estilo.TEXTO_2)
+    }
+
+    private fun alternarTelhado() {
+        semTelhado = !semTelhado
+        btTelhado.text = if (semTelhado) "Com teto" else "Sem teto"
+        Estilo.aplicarTipo(this, btTelhado, if (semTelhado) Estilo.TipoBotao.CHEIO else Estilo.TipoBotao.CONTORNO)
+        val xyz = original ?: return
+        if (semTelhado) info.text = "Tirando o teto…"
+        mostrar(xyz, false)
     }
 
     private fun atualizarAoVivo() {
