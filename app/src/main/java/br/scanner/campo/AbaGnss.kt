@@ -53,6 +53,78 @@ class AbaGnss(
     private lateinit var btUnico: Button
     private lateinit var btDuplo: Button
 
+    // IMU do scanner (pelo auxiliar): bolha eletrônica, temperatura e giro que estabiliza o rumo
+    private val imu = ImuScanner().apply {
+        vertical = prefs.getString("imu_vertical", null)?.split(';')?.mapNotNull { it.toDoubleOrNull() }?.takeIf { it.size == 3 }?.toDoubleArray()
+        escala = prefs.getString("imu_escala", null)?.toDoubleOrNull()
+    }
+    private val fundido = RumoFundido()
+    private lateinit var tvImu: TextView
+    private lateinit var btCalGiro: Button
+    @Volatile private var calGiro = false
+    private var calGiroCelular = 0.0
+    private var calGiroInicio = 0.0
+    private var calGiroUltimoCel = Double.NaN
+    private val inclinacoes = java.util.Collections.synchronizedList(ArrayList<Double>())
+
+    /** Rumo usado nas leituras: o do celular filtrado pelo giro da IMU (se calibrado), senão o do celular. */
+    private fun rumoAtual(agora: Long = System.currentTimeMillis()): Double =
+        if (imu.ativa(agora) && imu.escala != null && !fundido.valor().isNaN()) fundido.valor() else rumo.quadricula(agora)
+
+    /** Linha "#IMU …" do auxiliar (thread do socket). */
+    fun aoImu(l: String) {
+        val r = ImuScanner.ler(l) ?: return
+        val agora = System.currentTimeMillis()
+        imu.adicionar(r, agora)
+        val cel = rumo.quadricula(agora)
+        fundido.atualizar(cel, imu.rumoGiro(), agora)
+        if (calGiro && !cel.isNaN()) {
+            if (!calGiroUltimoCel.isNaN()) calGiroCelular += RumoCelular.diferenca(cel, calGiroUltimoCel)
+            calGiroUltimoCel = cel
+        }
+        if (coletor != null) imu.inclinacao()?.let { inclinacoes.add(it) }
+    }
+
+    private fun zerarVertical() {
+        val g = imu.gravidade()
+        if (g == null || !imu.ativa()) { toast("Sem IMU: ligue o GNSS (o auxiliar lê a IMU junto)"); return }
+        val u = ImuScanner.unitario(g)
+        imu.vertical = u
+        prefs.edit().putString("imu_vertical", imu.texto(u)).apply()
+        toast("Vertical zerada: daqui em diante a bolha eletrônica mede a partir desta posição")
+    }
+
+    /** Gire o scanner devagar (≥ 1/4 de volta, de preferência 1 volta): a escala do giro sai do rumo do celular. */
+    private fun alternarCalGiro() {
+        if (!calGiro) {
+            if (!imu.ativa()) { toast("Sem IMU: ligue o GNSS (o auxiliar lê a IMU junto)"); return }
+            if (rumo.quadricula().isNaN()) { toast("Sem rumo do celular"); return }
+            calGiroCelular = 0.0; calGiroUltimoCel = Double.NaN; calGiroInicio = imu.giroVertical; calGiro = true
+            btCalGiro.text = "Terminei de girar"
+            toast("Gire o scanner devagar, em pé, uma volta inteira, e toque em Terminei")
+            return
+        }
+        calGiro = false
+        btCalGiro.text = "Calibrar o giro (1 volta)"
+        val giro = imu.giroVertical - calGiroInicio
+        if (kotlin.math.abs(calGiroCelular) < 90 || giro == 0.0) { toast("Girou pouco (${f(calGiroCelular, 0)}°): gire pelo menos 1/4 de volta"); return }
+        val e = calGiroCelular / giro
+        imu.escala = e
+        prefs.edit().putString("imu_escala", e.toString()).apply()
+        toast("Giro calibrado: ${f(calGiroCelular, 0)}° pelo celular")
+    }
+
+    private fun textoImu(): String {
+        val r = imu.ultimo
+        if (r == null || !imu.ativa()) return "IMU do scanner: sem dados (vem pelo auxiliar com o GNSS ligado e o levantamento parado)."
+        val incl = imu.inclinacao()
+        val (h, _) = alturaAntena()
+        val bolha = if (incl == null) "bolha: zere a vertical com o suporte a prumo"
+            else "inclinação ${f(incl, 2)}°" + (h?.let { " (≈ ${f(it * Math.tan(Math.toRadians(incl)) * 100, 1)} cm na ponta)" } ?: "")
+        return "IMU do scanner: $bolha · ${f(r.tempC, 1)} °C · giro ${if (imu.escala == null) "sem calibrar" else "calibrado"}" +
+            (if (calGiro) "\nCalibrando o giro: ${f(calGiroCelular, 0)}° girados pelo celular…" else "")
+    }
+
     private fun chaveCal() = "gnss_cal_" + suporte.codigo
     private fun calibracao(): Excentricidade.Calibracao? = Excentricidade.Calibracao.de(prefs.getString(chaveCal(), null))
 
@@ -85,7 +157,7 @@ class AbaGnss(
         ultimoGga = g; ultimoGgaMs = agora
         val lat = g.lat; val lon = g.lon
         if (lat != null && lon != null && agora - rumoPosicaoMs > 60_000) { rumo.posicao(lat, lon, g.altitude ?: 0.0); rumoPosicaoMs = agora }
-        val r = rumo.quadricula(agora)
+        val r = rumoAtual(agora)
         coletor?.adicionar(g, agora, r)
         if (g.qualidade == 4 && lat != null && lon != null) {
             val u = Geodesia.utm(lat, lon, fusoTrajetoria)
@@ -170,6 +242,19 @@ class AbaGnss(
         cRumo.addView(Estilo.texto(ctx, "1 leitura: o celular preso no scanner (apontando para o mesmo lado) dá o rumo, e o app " +
             "desconta o afastamento da antena. Calibre com uma leitura dupla (a cada dia ou se mexer no celular): o app aprende " +
             "o afastamento sozinho. Andando com RTK fixo entre os pontos, a trajetória confere a bússola.", 12f, Estilo.TEXTO_3)
+            .apply { setPadding(ctx.dp(2), ctx.dp(8), ctx.dp(2), 0) })
+        tvImu = Estilo.texto(ctx, "", 13f, Estilo.TEXTO_2).apply { setPadding(ctx.dp(2), ctx.dp(12), ctx.dp(2), ctx.dp(4)) }
+        cRumo.addView(tvImu)
+        val linhaImu = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
+        val btZerar = Estilo.botao(ctx, "Zerar a vertical", Estilo.TipoBotao.CONTORNO) { zerarVertical() }
+        btCalGiro = Estilo.botao(ctx, "Calibrar o giro (1 volta)", Estilo.TipoBotao.CONTORNO) { alternarCalGiro() }
+        for (b in listOf(btZerar, btCalGiro)) b.textSize = 13f
+        linhaImu.addView(btZerar, LinearLayout.LayoutParams(0, ctx.dp(54), 1f).apply { rightMargin = ctx.dp(8) })
+        linhaImu.addView(btCalGiro, LinearLayout.LayoutParams(0, ctx.dp(54), 1f))
+        cRumo.addView(linhaImu)
+        cRumo.addView(Estilo.texto(ctx, "Zerar a vertical: com o bastão a prumo pela bolha (uma vez; vale para os dois suportes se a " +
+            "bolha for a do bastão). Depois o app avisa quando o scanner estiver inclinado numa leitura. Calibrar o giro: gire o " +
+            "scanner em pé, devagar, uma volta; a IMU passa a estabilizar o rumo do celular.", 12f, Estilo.TEXTO_3)
             .apply { setPadding(ctx.dp(2), ctx.dp(8), ctx.dp(2), 0) })
         col.addView(cRumo)
         rumo.ligar()
@@ -269,10 +354,11 @@ class AbaGnss(
                 if (metodoUnico) {
                     val c = calibracao()
                     if (c == null) { toast("Sem calibração: faça um ponto com 2 leituras 180° primeiro"); return }
-                    if (rumo.quadricula().isNaN()) { toast("Sem rumo do celular"); return }
+                    if (rumoAtual().isNaN()) { toast("Sem rumo do celular"); return }
                     if (c.eixo != rumo.eixo) { toast("O celular está em outra posição que na calibração: calibre de novo (2 leituras)"); return }
                 }
                 medindoUnico = metodoUnico
+                inclinacoes.clear()
                 prefs.edit().putString("gnss_braco", etBraco.edit.text.toString().trim()).putString("gnss_bastao", etBastao.edit.text.toString().trim())
                     .putString("gnss_rosca", etRosca.edit.text.toString().trim()).putInt("gnss_tempo", tempo())
                     .putString("gnss_obra", etObra.edit.text.toString().trim()).apply()
@@ -320,6 +406,7 @@ class AbaGnss(
             }
         }
         tvRumo.text = textoRumo()
+        tvImu.text = textoImu()
         val c = coletor
         if ((etapa == Etapa.LEITURA1 || etapa == Etapa.LEITURA2) && c != null) {
             if (c.completo(agora)) { terminarLeitura(c); return }
@@ -353,6 +440,15 @@ class AbaGnss(
             val r = PontoGnss.Resultado.duasLeituras(nome, desc, suporte, h ?: 0.0, l1, l)
             mostrarResultado(r, Excentricidade.calibrar(l1, l, rumo.eixo, trajetoria.estimativa()?.first))
         }
+    }
+
+    /** Inclinação média pela IMU nas leituras deste ponto e o erro que ela dá na ponta; null sem bolha zerada. */
+    private fun inclinacaoMedia(): Pair<Double, Double>? {
+        val v = synchronized(inclinacoes) { inclinacoes.toList() }
+        if (v.isEmpty()) return null
+        val m = v.average()
+        val h = alturaAntena().first ?: return m to 0.0
+        return m to h * Math.tan(Math.toRadians(v.max()))
     }
 
     /**
@@ -407,7 +503,11 @@ class AbaGnss(
 
     /** [cal]: calibração do rumo tirada desta leitura dupla (gravada junto com o ponto, se a coerência for boa). */
     private fun mostrarResultado(r: PontoGnss.Resultado, cal: Excentricidade.Calibracao?) {
-        val av = r.avisos()
+        val av = ArrayList(r.avisos())
+        val incl = inclinacaoMedia()
+        if (incl != null && incl.second > 0.01)
+            av.add("o scanner estava inclinado até ${f(Math.toDegrees(Math.atan(incl.second / (alturaAntena().first ?: 1.0))), 2)}° pela IMU: " +
+                "até ${f(incl.second * 100, 1)} cm na ponta. Nivele e meça de novo")
         val calOk = cal != null && cal.coerencia <= 20
         val msg = buildString {
             append("E ${f(r.e, 3)}\nN ${f(r.n, 3)}\nCota ${f(r.altitude, 3)} (geoide do receptor)\n")
@@ -417,6 +517,7 @@ class AbaGnss(
             if (r.l2 != null) append("Afastamento da antena: ${f(r.afastamento * 100, 1)} cm · diferença de altura entre leituras: ${f(r.difVertical * 100, 1)} cm\n")
             else append("Afastamento descontado: ${f(r.afastamento * 100, 1)} cm\n")
             append("Suporte: ${r.suporte.rotulo}, ponta → antena ${f(r.alturaAntena, 3)} m")
+            if (incl != null) append("\nInclinação pela IMU: média ${f(incl.first, 2)}° (erro máx. na ponta ${f(incl.second * 100, 1)} cm)")
             if (cal != null) append("\n\nCalibração do rumo: antena a ${f(cal.distancia * 100, 1)} cm, ${f(cal.angulo, 0)}° do celular, " +
                 "coerência ${f(cal.coerencia, 0)}° " + if (calOk) "(será gravada ao salvar)" else "(RUIM: não será usada)")
             else if (r.l2 != null) append("\n\nSem rumo do celular nesta leitura: a calibração não foi atualizada.")

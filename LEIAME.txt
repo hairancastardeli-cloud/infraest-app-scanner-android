@@ -1,6 +1,18 @@
-SCANNER CAMPO 0.11 — app Android próprio para o scanner GeoSun (GS-102G)
+SCANNER CAMPO 0.12 — app Android próprio para o scanner GeoSun (GS-102G)
 =====================================================================
 Feito a partir da leitura do FireEye 3.2.0 (protocolo do scanner). Não usa nem altera o app da GeoSun.
+
+NOVIDADES DA 0.12
+  - IMU DO SCANNER SEM LEVANTAMENTO: a captura de 10/11/2026 mostrou que a IMU (ttyS0, 115200) transmite SEMPRE, 200 vezes
+    por segundo; com o levantamento parado ninguém lia. Quadro de 40 bytes: 55 AA 24 + 9 inteiros (tempo em ms, giro
+    X/Y/Z, aceleração X/Y/Z em µm/s², temperatura ×100, tempo em 0,1 ms) + soma de verificação. O auxiliar do GNSS agora
+    lê a IMU junto (só leitura) e solta a serial quando o levantamento começa.
+      * BOLHA ELETRÔNICA (aba GNSS > "Zerar a vertical", com o bastão a prumo): o app mostra a inclinação do scanner e o
+        erro que ela dá na ponta, e avisa no resultado do ponto se o scanner estava inclinado (> 1 cm na ponta).
+      * TEMPERATURA do scanner (sensor da IMU), na aba GNSS.
+      * GIRO: "Calibrar o giro (1 volta)" acha a escala do giroscópio pelo rumo do celular; depois o rumo usado nas
+        leituras é o do celular filtrado pelo giro da IMU (mudanças pelo giro, a bússola só corrige a deriva devagar).
+    A IMU não acha o norte sozinha (não há bússola no scanner): o norte continua vindo do celular + calibração.
 
 NOVIDADES DA 0.11
   - PONTO COM 1 LEITURA (aba GNSS > "Método do ponto"): o celular preso no scanner, apontando para o mesmo lado, dá o
@@ -115,7 +127,7 @@ NOVIDADES DA 0.7
   - Mapa: trechos em atenção em laranja, perdido em vermelho.
 
 INSTALAR NO CELULAR
-  1. Mande o arquivo ScannerCampo-0.11.apk para o celular (cabo USB, Drive, WhatsApp).
+  1. Mande o arquivo ScannerCampo-0.12.apk para o celular (cabo USB, Drive, WhatsApp).
   2. Abra o arquivo no celular. O Android pede para permitir "instalar apps desconhecidos" para o app que
      abriu o arquivo (Arquivos, Chrome, WhatsApp…): permita e instale.
   3. O FireEye e o Scanner Campo NÃO devem ficar conectados ao scanner ao mesmo tempo: feche o FireEye antes.

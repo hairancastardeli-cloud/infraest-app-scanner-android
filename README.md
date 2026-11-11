@@ -26,6 +26,8 @@ levantamento (nome com data e hora; partes `_p2`, `_p3`…), pausa sozinho quand
   `Sonda.kt`, `InvestigacaoGnss.kt` — portas e investigação só de leitura do scanner.
 - `RumoCelular.kt`, `Excentricidade.kt` — rumo pelo celular preso no scanner (vetor de rotação do Android, norte da quadrícula),
   calibração do afastamento da antena por uma leitura dupla, ponto com 1 leitura e conferência pela trajetória do GNSS.
+- `ImuScanner.kt` — IMU do scanner pelo auxiliar (ttyS0, quadros 55 AA 24 de 40 bytes): bolha eletrônica, temperatura e
+  giro que filtra o rumo do celular (`RumoFundido`).
 - `Semaforo.kt` — resumo verde/amarelo/vermelho do fim do levantamento (perdido, tremor, ambiente pobre, fechamento, GNSS × SLAM).
 - `Ntrip.kt`, `Gga.kt` — cliente NTRIP (mountpoints, correções RTCM) e leitura de GGA/GST.
 - `MainActivity.kt`, `Estilo.kt`, `VistaTopo.kt` — interface, tema e vista de cima do caminho. `Diagnostico.kt`, `Equipamento.kt` — registros.

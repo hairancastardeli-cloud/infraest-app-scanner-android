@@ -130,7 +130,7 @@ class AuxiliarGnss(
                         l == "#POS" -> if (estado != Estado.LEVANTAMENTO) mudar(Estado.LEVANTAMENTO, "levantamento rodando: o GNSS vem pelo levantamento")
                         l == "#OK" -> if (estado != Estado.LIGADO) mudar(Estado.LIGADO, "auxiliar ligado")
                         l.startsWith("#ERRO") -> mudar(Estado.INSTALANDO, "auxiliar: " + l.removePrefix("#ERRO").trim().take(120))
-                        l.startsWith("$") -> aoLinha(l)
+                        l.startsWith("$") || l.startsWith("#IMU") -> aoLinha(l)
                     }
                 }
             } catch (_: Exception) { }
