@@ -1021,15 +1021,11 @@ class MainActivity : Activity() {
         cartaoScanner.addView(Estilo.tituloCartao(this, "Scanner"))
         btConectarScanner = Estilo.botao(this, "Conectar ao scanner", Estilo.TipoBotao.CHEIO) { botaoConectarScanner() }
         cartaoScanner.addView(btConectarScanner)
-        tvScanner = Estilo.texto(this, "Ligue o scanner, deixe a Localização e o Wi-Fi do celular ligados e toque em Conectar: o app procura a rede do scanner (nome ${ConectorScanner.PREFIXO}…) e conecta sozinho.", 14f, Estilo.TEXTO_2)
+        tvScanner = Estilo.texto(this, "Wi-Fi e Localização do celular ligados; o app acha a rede ${ConectorScanner.PREFIXO}… sozinho.", 14f, Estilo.TEXTO_2)
             .apply { setPadding(dp(2), dp(12), dp(2), 0) }
         cartaoScanner.addView(tvScanner)
         tvPreparo = Estilo.texto(this, "Preparo do scanner: aparece depois de conectar.", 13f, Estilo.TEXTO_2).apply { setPadding(dp(2), dp(10), dp(2), 0) }
         cartaoScanner.addView(tvPreparo)
-        cartaoScanner.addView(Estilo.espaco(this, 8))
-        cartaoScanner.addView(Estilo.botao(this, "Sondar o scanner (portas de rede)", Estilo.TipoBotao.CONTORNO) { sondarScanner() })
-        cartaoScanner.addView(Estilo.botao(this, "Investigar o GNSS (adb, só leitura)", Estilo.TipoBotao.CONTORNO) { investigarGnss() })
-        cartaoScanner.addView(Estilo.botao(this, "Capturar a IMU (4 s, sem motor)", Estilo.TipoBotao.CONTORNO) { investigarGnss(imu = true) })
         col.addView(cartaoScanner)
 
         val cartaoNumeros = Estilo.cartao(this)
@@ -1069,9 +1065,15 @@ class MainActivity : Activity() {
             setOnCheckedChangeListener { _, v -> prefs.edit().putBoolean("auto_pausa", v).apply() }
         }
         cartaoLev.addView(cbAutoPausa)
-        cartaoLev.addView(Estilo.texto(this, "Iniciar, parar/pausar e gravar ponto de controle: botões fixos no rodapé da tela. " +
-            "Cada início leva a data e a hora no nome: repetir o nome não apaga o levantamento anterior.", 13f, Estilo.TEXTO_2))
+        cartaoLev.addView(Estilo.texto(this, "Cada início leva data e hora no nome: repetir o nome não apaga o anterior.", 12f, Estilo.TEXTO_3))
         col.addView(cartaoLev)
+
+        // ferramentas de diagnóstico (só leitura, exceto a captura da IMU), fora do caminho do dia a dia
+        val (cartaoFerr, ferr) = Estilo.recolhivel(this, "Ferramentas do scanner")
+        ferr.addView(Estilo.botao(this, "Sondar as portas de rede", Estilo.TipoBotao.CONTORNO) { sondarScanner() })
+        ferr.addView(Estilo.botao(this, "Investigar o GNSS (adb)", Estilo.TipoBotao.CONTORNO) { investigarGnss() })
+        ferr.addView(Estilo.botao(this, "Capturar a IMU (4 s)", Estilo.TipoBotao.CONTORNO) { investigarGnss(imu = true) })
+        col.addView(cartaoFerr)
 
         return ScrollView(this).apply { isFillViewport = false; addView(col); clipToPadding = false }.also { sv ->
             focoVisivel(sv, listOf(etProjeto))

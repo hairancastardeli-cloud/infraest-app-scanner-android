@@ -12,8 +12,8 @@ android {
         applicationId = "br.scanner.campo"
         minSdk = 26
         targetSdk = 35
-        versionCode = 17
-        versionName = "0.12"
+        versionCode = 18
+        versionName = "0.13"
     }
 
     buildTypes {

@@ -143,6 +143,34 @@ object Estilo {
         return Numero(b, v)
     }
 
+    /** Cartão com título que abre e fecha ao toque (fechado por padrão): devolve (cartão, conteúdo). */
+    fun recolhivel(ctx: Context, titulo: String, aberto: Boolean = false): Pair<LinearLayout, LinearLayout> {
+        val c = cartao(ctx)
+        val cab = tituloCartao(ctx, (if (aberto) "▾  " else "▸  ") + titulo).apply { with(ctx) { setPadding(0, dp(2), 0, dp(2)) } }
+        val conteudo = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL; visibility = if (aberto) View.VISIBLE else View.GONE
+            with(ctx) { setPadding(0, dp(10), 0, 0) }
+        }
+        cab.setOnClickListener {
+            val abrir = conteudo.visibility != View.VISIBLE
+            conteudo.visibility = if (abrir) View.VISIBLE else View.GONE
+            cab.text = ((if (abrir) "▾  " else "▸  ") + titulo).uppercase()
+        }
+        c.addView(cab); c.addView(conteudo)
+        return c to conteudo
+    }
+
+    /** Dois botões lado a lado, para escolher entre duas opções (o escolhido fica cheio). */
+    fun parDeOpcoes(ctx: Context, a: Button, b: Button): LinearLayout = LinearLayout(ctx).apply {
+        orientation = LinearLayout.HORIZONTAL
+        for (x in listOf(a, b)) { x.textSize = 14f; x.minHeight = 0 }
+        with(ctx) {
+            addView(a, LinearLayout.LayoutParams(0, dp(44), 1f).apply { rightMargin = dp(8) })
+            addView(b, LinearLayout.LayoutParams(0, dp(44), 1f))
+            setPadding(0, 0, 0, dp(8))
+        }
+    }
+
     fun espaco(ctx: Context, h: Int) = View(ctx).apply {
         layoutParams = LinearLayout.LayoutParams(1, with(ctx) { dp(h) })
     }

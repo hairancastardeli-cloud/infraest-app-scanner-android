@@ -50,6 +50,7 @@ class AbaGnss(
     private var metodoUnico = prefs.getBoolean("gnss_unico", false)
     private var medindoUnico = false
     private lateinit var tvRumo: TextView
+    private lateinit var tvResumo: TextView
     private lateinit var btUnico: Button
     private lateinit var btDuplo: Button
 
@@ -112,6 +113,25 @@ class AbaGnss(
         imu.escala = e
         prefs.edit().putString("imu_escala", e.toString()).apply()
         toast("Giro calibrado: ${f(calGiroCelular, 0)}° pelo celular")
+    }
+
+    /** Uma linha no cartão Ponto: o que falta ou o estado do rumo e da bolha. Detalhes ficam em "Ajustes e calibração". */
+    private fun textoResumo(): Pair<String, Int> {
+        val falta = alturaAntena().second
+        if (falta.isNotEmpty()) return ("Falta: " + falta.removePrefix("preencha ") + " (Ajustes e calibração)") to Estilo.ATENCAO
+        val partes = ArrayList<String>()
+        if (metodoUnico) {
+            val r = rumoAtual()
+            val c = calibracao()
+            if (c == null) return "1 leitura precisa de calibração: meça um ponto com 2 leituras 180°" to Estilo.ATENCAO
+            if (c.eixo != rumo.eixo && rumo.eixo.isNotEmpty()) return "Celular em outra posição: calibre de novo (2 leituras)" to Estilo.ATENCAO
+            partes.add(if (r.isNaN()) "rumo: aguardando" else "rumo ${f(r, 0)}°")
+        }
+        if (imu.ativa()) {
+            imu.inclinacao()?.let { partes.add("bolha ${f(it, 1)}°") }
+            imu.ultimo?.let { partes.add("${f(it.tempC, 0)} °C") }
+        }
+        return partes.joinToString(" · ").replaceFirstChar { it.uppercase() } to Estilo.TEXTO_2
     }
 
     private fun textoImu(): String {
@@ -178,115 +198,90 @@ class AbaGnss(
         val ctx = act
         val col = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; setPadding(ctx.dp(14), ctx.dp(8), ctx.dp(14), ctx.dp(24)) }
 
+        // ---- GNSS: estado e ligar/desligar
         val cSit = Estilo.cartao(ctx)
         cSit.addView(Estilo.tituloCartao(ctx, "GNSS do scanner"))
         tvSituacao = Estilo.texto(ctx, "", 14f, Estilo.TEXTO_2)
         cSit.addView(tvSituacao)
-        btLigar = Estilo.botao(ctx, "Ligar o GNSS (sem levantamento)", Estilo.TipoBotao.CHEIO) { ligarGnss() }
+        btLigar = Estilo.botao(ctx, "Ligar o GNSS", Estilo.TipoBotao.CHEIO) { ligarGnss() }
         cSit.addView(btLigar)
         btDesligar = Estilo.botao(ctx, "Desligar o GNSS", Estilo.TipoBotao.CONTORNO) { desligarGnss() }
         cSit.addView(btDesligar)
-        cSit.addView(Estilo.texto(ctx, "Liga o receptor do scanner sem iniciar o levantamento (nada é gravado no cartão nem no " +
-            "scanner; um reinício volta tudo ao normal). Se você iniciar um levantamento, a posição passa a vir dele. " +
-            "O RTK vem do caster da aba RTK.", 12f, Estilo.TEXTO_3).apply { setPadding(ctx.dp(2), ctx.dp(8), ctx.dp(2), 0) })
         col.addView(cSit)
 
-        val cObra = Estilo.cartao(ctx)
-        cObra.addView(Estilo.tituloCartao(ctx, "Obra"))
-        etObra = Estilo.campo(ctx, "Nome da obra (um arquivo de pontos por obra)",
-            prefs.getString("gnss_obra", null) ?: prefs.getString("projeto", "") ?: "", dica = "ex.: rua_matriz")
-        etObra.edit.imeOptions = EditorInfo.IME_ACTION_DONE or EditorInfo.IME_FLAG_NO_EXTRACT_UI
-        etObra.edit.setOnFocusChangeListener { _, tem -> if (!tem) { prefs.edit().putString("gnss_obra", etObra.edit.text.toString().trim()).apply(); atualizarLista() } }
-        cObra.addView(etObra.bloco)
-        tvArquivo = Estilo.texto(ctx, "", 12f, Estilo.TEXTO_3)
-        cObra.addView(tvArquivo)
-        col.addView(cObra)
-
-        val cSup = Estilo.cartao(ctx)
-        cSup.addView(Estilo.tituloCartao(ctx, "Suporte"))
-        val linhaSup = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
-        btBraco = Estilo.botao(ctx, PontoGnss.Suporte.BRACO.rotulo, Estilo.TipoBotao.CONTORNO) { escolherSuporte(PontoGnss.Suporte.BRACO) }
-        btBastao = Estilo.botao(ctx, PontoGnss.Suporte.BASTAO.rotulo, Estilo.TipoBotao.CONTORNO) { escolherSuporte(PontoGnss.Suporte.BASTAO) }
-        for (b in listOf(btBraco, btBastao)) b.textSize = 14f
-        linhaSup.addView(btBraco, LinearLayout.LayoutParams(0, ctx.dp(54), 1f).apply { rightMargin = ctx.dp(8) })
-        linhaSup.addView(btBastao, LinearLayout.LayoutParams(0, ctx.dp(54), 1f))
-        cSup.addView(linhaSup)
-        val decimal = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
-        blocoBraco = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; setPadding(0, ctx.dp(12), 0, 0) }
-        etBraco = Estilo.campo(ctx, "Ponta do braço → antena (m)", prefs.getString("gnss_braco", null) ?: "0.253", decimal)
-        blocoBraco.addView(etBraco.bloco)
-        blocoBraco.addView(Estilo.texto(ctx, "0,253 m vem do .pro do GS-102G (braço da âncora e da antena). Confira num marco conhecido " +
-            "antes de usar em serviço.", 12f, Estilo.TEXTO_3))
-        cSup.addView(blocoBraco)
-        blocoBastao = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; setPadding(0, ctx.dp(12), 0, 0) }
-        etBastao = Estilo.campo(ctx, "Altura do bastão (m)", prefs.getString("gnss_bastao", null) ?: "2.000", decimal)
-        etRosca = Estilo.campo(ctx, "Rosca → antena (m)", prefs.getString("gnss_rosca", null) ?: "", decimal, "medir uma vez e guardar")
-        etRosca.edit.imeOptions = EditorInfo.IME_ACTION_DONE or EditorInfo.IME_FLAG_NO_EXTRACT_UI
-        blocoBastao.addView(etBastao.bloco); blocoBastao.addView(etRosca.bloco)
-        blocoBastao.addView(Estilo.texto(ctx, "Rosca → antena: desnível da rosca de baixo do scanner até a antena. Para conferir: meça o " +
-            "mesmo marco com o braço e com o bastão; a diferença de cota é o erro dessa medida.", 12f, Estilo.TEXTO_3))
-        cSup.addView(blocoBastao)
-        col.addView(cSup)
-
-        val cRumo = Estilo.cartao(ctx)
-        cRumo.addView(Estilo.tituloCartao(ctx, "Método do ponto"))
-        val linhaMet = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
-        btUnico = Estilo.botao(ctx, "1 leitura (rumo)", Estilo.TipoBotao.CONTORNO) { escolherMetodo(true) }
-        btDuplo = Estilo.botao(ctx, "2 leituras 180°", Estilo.TipoBotao.CONTORNO) { escolherMetodo(false) }
-        for (b in listOf(btUnico, btDuplo)) b.textSize = 14f
-        linhaMet.addView(btUnico, LinearLayout.LayoutParams(0, ctx.dp(54), 1f).apply { rightMargin = ctx.dp(8) })
-        linhaMet.addView(btDuplo, LinearLayout.LayoutParams(0, ctx.dp(54), 1f))
-        cRumo.addView(linhaMet)
-        tvRumo = Estilo.texto(ctx, "", 13f, Estilo.TEXTO_2).apply { setPadding(ctx.dp(2), ctx.dp(10), ctx.dp(2), 0) }
-        cRumo.addView(tvRumo)
-        cRumo.addView(Estilo.texto(ctx, "1 leitura: o celular preso no scanner (apontando para o mesmo lado) dá o rumo, e o app " +
-            "desconta o afastamento da antena. Calibre com uma leitura dupla (a cada dia ou se mexer no celular): o app aprende " +
-            "o afastamento sozinho. Andando com RTK fixo entre os pontos, a trajetória confere a bússola.", 12f, Estilo.TEXTO_3)
-            .apply { setPadding(ctx.dp(2), ctx.dp(8), ctx.dp(2), 0) })
-        tvImu = Estilo.texto(ctx, "", 13f, Estilo.TEXTO_2).apply { setPadding(ctx.dp(2), ctx.dp(12), ctx.dp(2), ctx.dp(4)) }
-        cRumo.addView(tvImu)
-        val linhaImu = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
-        val btZerar = Estilo.botao(ctx, "Zerar a vertical", Estilo.TipoBotao.CONTORNO) { zerarVertical() }
-        btCalGiro = Estilo.botao(ctx, "Calibrar o giro (1 volta)", Estilo.TipoBotao.CONTORNO) { alternarCalGiro() }
-        for (b in listOf(btZerar, btCalGiro)) b.textSize = 13f
-        linhaImu.addView(btZerar, LinearLayout.LayoutParams(0, ctx.dp(54), 1f).apply { rightMargin = ctx.dp(8) })
-        linhaImu.addView(btCalGiro, LinearLayout.LayoutParams(0, ctx.dp(54), 1f))
-        cRumo.addView(linhaImu)
-        cRumo.addView(Estilo.texto(ctx, "Zerar a vertical: com o bastão a prumo pela bolha (uma vez; vale para os dois suportes se a " +
-            "bolha for a do bastão). Depois o app avisa quando o scanner estiver inclinado numa leitura. Calibrar o giro: gire o " +
-            "scanner em pé, devagar, uma volta; a IMU passa a estabilizar o rumo do celular.", 12f, Estilo.TEXTO_3)
-            .apply { setPadding(ctx.dp(2), ctx.dp(8), ctx.dp(2), 0) })
-        col.addView(cRumo)
-        rumo.ligar()
-
+        // ---- Ponto: suporte, método, nome e medir
         val cMed = Estilo.cartao(ctx)
-        cMed.addView(Estilo.tituloCartao(ctx, "Medir ponto"))
-        etNome = Estilo.campo(ctx, "Nome do ponto", "1", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS)
-        etDesc = Estilo.campo(ctx, "Descrição / código (PC… = ponto de controle)", "",
-            InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS, "ex.: PC1 marco, poste, divisa")
-        etTempo = Estilo.campo(ctx, "Tempo de cada leitura (s)", prefs.getInt("gnss_tempo", 10).toString(), InputType.TYPE_CLASS_NUMBER)
-        etTempo.edit.imeOptions = EditorInfo.IME_ACTION_DONE or EditorInfo.IME_FLAG_NO_EXTRACT_UI
-        for (c in listOf(etNome, etDesc, etTempo)) cMed.addView(c.bloco)
-        cbFlutuante = CheckBox(ctx).apply {
-            text = "Aceitar RTK flutuante (só para pontos sem precisão)"; setTextColor(Estilo.TEXTO); textSize = 14f
-            isChecked = prefs.getBoolean("gnss_flutuante", false)
-            setOnCheckedChangeListener { _, v -> prefs.edit().putBoolean("gnss_flutuante", v).apply() }
-        }
-        cMed.addView(cbFlutuante)
-        tvMedicao = Estilo.texto(ctx, "", 14f, Estilo.TEXTO).apply { setPadding(ctx.dp(2), ctx.dp(8), ctx.dp(2), ctx.dp(4)) }
+        cMed.addView(Estilo.tituloCartao(ctx, "Ponto"))
+        btBraco = Estilo.botao(ctx, "Braço", Estilo.TipoBotao.CONTORNO) { escolherSuporte(PontoGnss.Suporte.BRACO) }
+        btBastao = Estilo.botao(ctx, "Bastão", Estilo.TipoBotao.CONTORNO) { escolherSuporte(PontoGnss.Suporte.BASTAO) }
+        cMed.addView(Estilo.parDeOpcoes(ctx, btBraco, btBastao))
+        btUnico = Estilo.botao(ctx, "1 leitura", Estilo.TipoBotao.CONTORNO) { escolherMetodo(true) }
+        btDuplo = Estilo.botao(ctx, "2 leituras 180°", Estilo.TipoBotao.CONTORNO) { escolherMetodo(false) }
+        cMed.addView(Estilo.parDeOpcoes(ctx, btUnico, btDuplo))
+        tvResumo = Estilo.texto(ctx, "", 13f, Estilo.TEXTO_2).apply { setPadding(ctx.dp(2), 0, ctx.dp(2), ctx.dp(10)) }
+        cMed.addView(tvResumo)
+        etNome = Estilo.campo(ctx, "Nome", "1", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS)
+        etDesc = Estilo.campo(ctx, "Descrição (PC… = controle)", "",
+            InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS, "ex.: PC1 marco")
+        etDesc.edit.imeOptions = EditorInfo.IME_ACTION_DONE or EditorInfo.IME_FLAG_NO_EXTRACT_UI
+        val linhaNome = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
+        linhaNome.addView(etNome.bloco, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 0.38f).apply { rightMargin = ctx.dp(8) })
+        linhaNome.addView(etDesc.bloco, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 0.62f))
+        cMed.addView(linhaNome)
+        tvMedicao = Estilo.texto(ctx, "", 14f, Estilo.TEXTO).apply { setPadding(ctx.dp(2), 0, ctx.dp(2), ctx.dp(4)) }
         cMed.addView(tvMedicao)
-        btMedir = Estilo.botao(ctx, "Medir leitura 1", Estilo.TipoBotao.SUCESSO) { medir() }
+        btMedir = Estilo.botao(ctx, "Medir", Estilo.TipoBotao.SUCESSO) { medir() }
         cMed.addView(btMedir)
         btCancelar = Estilo.botao(ctx, "Cancelar o ponto", Estilo.TipoBotao.CONTORNO) { cancelar() }
         cMed.addView(btCancelar)
         col.addView(cMed)
 
+        // ---- Pontos da obra
         val cPts = Estilo.cartao(ctx)
         cPts.addView(Estilo.tituloCartao(ctx, "Pontos da obra"))
-        cPts.addView(Estilo.botao(ctx, "Compartilhar o CSV", Estilo.TipoBotao.CONTORNO) { compartilhar() })
-        lista = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; setPadding(0, ctx.dp(8), 0, 0) }
+        etObra = Estilo.campo(ctx, "Obra", prefs.getString("gnss_obra", null) ?: prefs.getString("projeto", "") ?: "", dica = "ex.: rua_matriz")
+        etObra.edit.imeOptions = EditorInfo.IME_ACTION_DONE or EditorInfo.IME_FLAG_NO_EXTRACT_UI
+        etObra.edit.setOnFocusChangeListener { _, tem -> if (!tem) { prefs.edit().putString("gnss_obra", etObra.edit.text.toString().trim()).apply(); atualizarLista() } }
+        cPts.addView(etObra.bloco)
+        tvArquivo = Estilo.texto(ctx, "", 12f, Estilo.TEXTO_3)
+        cPts.addView(tvArquivo)
+        lista = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; setPadding(0, ctx.dp(4), 0, ctx.dp(8)) }
         cPts.addView(lista)
+        cPts.addView(Estilo.botao(ctx, "Compartilhar o CSV", Estilo.TipoBotao.CONTORNO) { compartilhar() })
         col.addView(cPts)
+
+        // ---- Ajustes e calibração (recolhido): alturas, tempo, rumo e IMU
+        val (cAj, aj) = Estilo.recolhivel(ctx, "Ajustes e calibração")
+        val decimal = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
+        blocoBraco = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+        etBraco = Estilo.campo(ctx, "Ponta do braço → antena (m)", prefs.getString("gnss_braco", null) ?: "0.253", decimal)
+        blocoBraco.addView(etBraco.bloco)
+        aj.addView(blocoBraco)
+        blocoBastao = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+        etBastao = Estilo.campo(ctx, "Altura do bastão (m)", prefs.getString("gnss_bastao", null) ?: "2.000", decimal)
+        etRosca = Estilo.campo(ctx, "Rosca → antena (m)", prefs.getString("gnss_rosca", null) ?: "", decimal, "medir uma vez")
+        blocoBastao.addView(etBastao.bloco); blocoBastao.addView(etRosca.bloco)
+        aj.addView(blocoBastao)
+        etTempo = Estilo.campo(ctx, "Tempo de cada leitura (s)", prefs.getInt("gnss_tempo", 10).toString(), InputType.TYPE_CLASS_NUMBER)
+        etTempo.edit.imeOptions = EditorInfo.IME_ACTION_DONE or EditorInfo.IME_FLAG_NO_EXTRACT_UI
+        aj.addView(etTempo.bloco)
+        cbFlutuante = CheckBox(ctx).apply {
+            text = "Aceitar RTK flutuante"; setTextColor(Estilo.TEXTO); textSize = 14f
+            isChecked = prefs.getBoolean("gnss_flutuante", false)
+            setOnCheckedChangeListener { _, v -> prefs.edit().putBoolean("gnss_flutuante", v).apply() }
+        }
+        aj.addView(cbFlutuante)
+        tvRumo = Estilo.texto(ctx, "", 13f, Estilo.TEXTO_2).apply { setPadding(ctx.dp(2), ctx.dp(12), ctx.dp(2), 0) }
+        aj.addView(tvRumo)
+        tvImu = Estilo.texto(ctx, "", 13f, Estilo.TEXTO_2).apply { setPadding(ctx.dp(2), ctx.dp(8), ctx.dp(2), ctx.dp(8)) }
+        aj.addView(tvImu)
+        val btZerar = Estilo.botao(ctx, "Zerar a vertical", Estilo.TipoBotao.CONTORNO) { zerarVertical() }
+        btCalGiro = Estilo.botao(ctx, "Calibrar o giro", Estilo.TipoBotao.CONTORNO) { alternarCalGiro() }
+        aj.addView(Estilo.parDeOpcoes(ctx, btZerar, btCalGiro))
+        aj.addView(Estilo.texto(ctx, "Zerar a vertical: bastão a prumo pela bolha. Calibrar o giro: gire o scanner em pé, devagar, " +
+            "uma volta. Calibração do rumo (para 1 leitura): é feita sozinha a cada ponto com 2 leituras.", 12f, Estilo.TEXTO_3))
+        col.addView(cAj)
+        rumo.ligar()
 
         campos = listOf(etObra, etBraco, etBastao, etRosca, etNome, etDesc, etTempo)
         escolherSuporte(suporte)
@@ -406,6 +401,7 @@ class AbaGnss(
             }
         }
         tvRumo.text = textoRumo()
+        textoResumo().let { (t, cor) -> tvResumo.text = t; tvResumo.setTextColor(cor); tvResumo.visibility = if (t.isEmpty()) View.GONE else View.VISIBLE }
         tvImu.text = textoImu()
         val c = coletor
         if ((etapa == Etapa.LEITURA1 || etapa == Etapa.LEITURA2) && c != null) {
@@ -481,21 +477,19 @@ class AbaGnss(
         btCancelar.visibility = if (etapa == Etapa.PARADO) View.GONE else View.VISIBLE
         when (etapa) {
             Etapa.PARADO -> {
-                tvMedicao.text = if (metodoUnico) "Ponta no ponto, scanner nivelado e parado (para qualquer lado): toque em Medir."
-                    else "Ponta no ponto, scanner nivelado e parado: toque em Medir leitura 1."
-                btMedir.text = if (metodoUnico) "Medir (1 leitura)" else "Medir leitura 1"
+                tvMedicao.text = ""
+                btMedir.text = if (metodoUnico) "Medir" else "Medir leitura 1"
                 btMedir.isEnabled = true; Estilo.aplicarTipo(act, btMedir, Estilo.TipoBotao.SUCESSO)
             }
             Etapa.LEITURA1, Etapa.LEITURA2 -> {
                 val k = if (etapa == Etapa.LEITURA1) 1 else 2
                 val seg = if (c == null || c.primeiraMs == 0L) 0 else ((System.currentTimeMillis() - c.primeiraMs) / 1000).toInt()
                 tvMedicao.text = "Leitura $k: ${c?.aceitas ?: 0} épocas · $seg de ${tempo()} s" +
-                    (if ((c?.rejeitadas ?: 0) > 0) " · ${c?.rejeitadas} descartadas (sem fixo)" else "") + "\nNão mexa no scanner."
+                    (if ((c?.rejeitadas ?: 0) > 0) " · ${c?.rejeitadas} sem fixo" else "") + " · não mexa"
                 btMedir.text = "Lendo… ($seg/${tempo()} s)"; btMedir.isEnabled = false; Estilo.aplicarTipo(act, btMedir, Estilo.TipoBotao.CONTORNO)
             }
             Etapa.GIRAR -> {
-                tvMedicao.text = "Leitura 1 ok. Agora GIRE O SCANNER 180° em volta da ponta, sem tirar a ponta do ponto, " +
-                    "nivele de novo e toque em Medir leitura 2."
+                tvMedicao.text = "Leitura 1 ok. Gire o scanner 180° em volta da ponta e nivele."
                 btMedir.text = "Girei 180°: medir leitura 2"; btMedir.isEnabled = true; Estilo.aplicarTipo(act, btMedir, Estilo.TipoBotao.SUCESSO)
             }
         }
@@ -549,8 +543,7 @@ class AbaGnss(
     private fun atualizarLista() {
         if (!::lista.isInitialized) return
         val arq = arquivo()
-        tvArquivo.text = "Arquivo: Android/data/br.scanner.campo/files/logs_slam/${arq.name}\n" +
-            "Formato dos coletores (Name, Easting, Northing, Elevation, Feature code…), lido direto pelo Gerador."
+        tvArquivo.text = "logs_slam/${arq.name}"
         lista.removeAllViews()
         val pts = PontoGnss.ler(arq)
         if (pts.isEmpty()) {
@@ -571,7 +564,7 @@ class AbaGnss(
             }
             lista.addView(t, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = act.dp(6) })
         }
-        lista.addView(Estilo.texto(act, "${pts.size} ponto(s). Toque longo para apagar um ponto.", 12f, Estilo.TEXTO_3).apply {
+        lista.addView(Estilo.texto(act, "${pts.size} ponto(s) · toque longo apaga", 12f, Estilo.TEXTO_3).apply {
             setPadding(act.dp(2), act.dp(8), 0, 0); gravity = Gravity.START })
     }
 
