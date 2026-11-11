@@ -172,7 +172,7 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
-        aux?.parar(); ntrip.desconectar(); equip.parar(); conector.liberar(); monitor.parar()
+        aux?.parar(); abaGnss.fechar(); ntrip.desconectar(); equip.parar(); conector.liberar(); monitor.parar()
         super.onDestroy()
     }
 
@@ -301,28 +301,30 @@ class MainActivity : Activity() {
      * Roda pelo adb do scanner (Wi-Fi, porta 5555) os comandos SÓ DE LEITURA de [InvestigacaoGnss] e mostra o relatório
      * para compartilhar. Só com o levantamento parado (lê 2 s das seriais do GNSS, que o "pos" usa durante o levantamento).
      */
-    private fun investigarGnss() {
+    private fun investigarGnss(imu: Boolean = false) {
         val rede = redeScanner
         if (rede == null || !equip.conectado) { toast("Conecte o scanner antes"); return }
+        if (imu && levantando) { toast("Pare o levantamento antes: enquanto ele roda, a IMU é do levantamento"); return }
         if (levantando && respostaInicioMs == 0L) { toast("Espere o scanner confirmar o início"); return }
         if (sondando) { toast("Já está rodando"); return }
-        // parado: lê também 2 s das seriais; levantando: só contadores e configuração (não rouba os dados do pos)
-        val comandos = if (levantando) InvestigacaoGnss.COMANDOS_LEVANTANDO else InvestigacaoGnss.COMANDOS
-        val quando = if (levantando) "durante o levantamento" else "com o levantamento parado"
+        // parado: lê também 2 s das seriais; levantando: só contadores e configuração (não rouba os dados do pos);
+        // IMU: liga a energia da IMU como o pos faz, grava 4 s e devolve a energia
+        val comandos = if (imu) InvestigacaoGnss.COMANDOS_IMU else if (levantando) InvestigacaoGnss.COMANDOS_LEVANTANDO else InvestigacaoGnss.COMANDOS
+        val quando = if (imu) "captura da IMU, scanner parado" else if (levantando) "durante o levantamento" else "com o levantamento parado"
         sondando = true
-        val dlg = AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert).setTitle("Investigando o GNSS…")
-            .setMessage("Conectando no adb do scanner (só leitura)…").setCancelable(false).show()
+        val dlg = AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert).setTitle(if (imu) "Capturando a IMU…" else "Investigando o GNSS…")
+            .setMessage("Conectando no adb do scanner…").setCancelable(false).show()
         Thread({
             val txt = try {
                 InvestigacaoGnss.rodar(rede.socketFactory, ConectorScanner.IP, comandos = comandos) { t -> ui.post { dlg.setMessage("Lendo: $t…") } }
             } catch (e: Exception) { "Falhou: ${e.message ?: e.javaClass.simpleName}" }
-            val cab = "Investigação do GNSS do scanner (só leitura, $quando; RTK ${if (ntrip.conectado) "ligado" else "desligado"}) em " +
+            val cab = "Investigação do scanner ($quando; RTK ${if (ntrip.conectado) "ligado" else "desligado"}) em " +
                 SimpleDateFormat("dd/MM/yyyy HH:mm:ss", Locale.US).format(Date()) + "\n"
-            try { File(pastaLogs(), if (levantando) "investigacao_gnss_levantando.txt" else "investigacao_gnss.txt").writeText(cab + txt) } catch (_: Exception) { }
+            try { File(pastaLogs(), if (imu) "captura_imu.txt" else if (levantando) "investigacao_gnss_levantando.txt" else "investigacao_gnss.txt").writeText(cab + txt) } catch (_: Exception) { }
             ui.post {
                 sondando = false; dlg.dismiss()
-                AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert).setTitle("Investigação do GNSS")
-                    .setMessage(txt.take(6000) + if (txt.length > 6000) "\n…(continua no arquivo)" else "")
+                AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert).setTitle(if (imu) "Captura da IMU" else "Investigação do GNSS")
+                    .setMessage(txt.take(9000) + if (txt.length > 9000) "\n…(continua no arquivo)" else "")
                     .setPositiveButton("Compartilhar") { _, _ ->
                         val i = android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain")
                             .putExtra(android.content.Intent.EXTRA_SUBJECT, "investigacao_gnss.txt").putExtra(android.content.Intent.EXTRA_TEXT, cab + txt)
@@ -1026,6 +1028,7 @@ class MainActivity : Activity() {
         cartaoScanner.addView(Estilo.espaco(this, 8))
         cartaoScanner.addView(Estilo.botao(this, "Sondar o scanner (portas de rede)", Estilo.TipoBotao.CONTORNO) { sondarScanner() })
         cartaoScanner.addView(Estilo.botao(this, "Investigar o GNSS (adb, só leitura)", Estilo.TipoBotao.CONTORNO) { investigarGnss() })
+        cartaoScanner.addView(Estilo.botao(this, "Capturar a IMU (4 s, sem motor)", Estilo.TipoBotao.CONTORNO) { investigarGnss(imu = true) })
         col.addView(cartaoScanner)
 
         val cartaoNumeros = Estilo.cartao(this)

@@ -51,7 +51,7 @@ class PontoGnssTest {
         assertTrue(c1.completo(6000L))
         val c2 = PontoGnss.Coletor(5, false, c1.fusoAtual())
         for (s in 0 until 6) c2.adicionar(gga("1201%02d.00".format(s), lat0 + 0.0 * mLat, lon0 - 0.30 * mLon, 700.253), 1000L + s * 1000L)
-        val r = PontoGnss.Resultado("PC1", "marco", PontoGnss.Suporte.BRACO, PontoGnss.ALTURA_BRACO, c1.leitura()!!, c2.leitura()!!)
+        val r = PontoGnss.Resultado.duasLeituras("PC1", "marco", PontoGnss.Suporte.BRACO, PontoGnss.ALTURA_BRACO, c1.leitura()!!, c2.leitura()!!)
         val ref = Geodesia.utm(lat0, lon0)
         assertEquals(ref.e, r.e, 0.005); assertEquals(ref.n, r.n, 0.005)
         assertEquals(0.30, r.afastamento, 0.01)
@@ -65,7 +65,7 @@ class PontoGnssTest {
         for (s in 0 until 5) c1.adicionar(gga("1300%02d.00".format(s), -20.0, -44.0, 800.0), 1000L + s * 1000L)
         val c2 = PontoGnss.Coletor(1, false, c1.fusoAtual())
         for (s in 0 until 5) c2.adicionar(gga("1301%02d.00".format(s), -20.0, -44.0, 800.10), 1000L + s * 1000L)
-        val r = PontoGnss.Resultado("1", "", PontoGnss.Suporte.BASTAO, 2.0, c1.leitura()!!, c2.leitura()!!)
+        val r = PontoGnss.Resultado.duasLeituras("1", "", PontoGnss.Suporte.BASTAO, 2.0, c1.leitura()!!, c2.leitura()!!)
         val av = r.avisos().joinToString(" | ")
         assertTrue(av, av.contains("girado 180°"))
         assertTrue(av, av.contains("nivelado"))
@@ -77,8 +77,8 @@ class PontoGnssTest {
         val l = c1.leitura()!!
         val f = PontoGnss.arquivo(Files.createTempDirectory("pts").toFile(), "obra teste")
         assertEquals("pontos_rtk_obra_teste.csv", f.name)
-        PontoGnss.salvar(f, PontoGnss.Resultado("PC1", "marco, muro", PontoGnss.Suporte.BRACO, 0.253, l, l))
-        PontoGnss.salvar(f, PontoGnss.Resultado("PC2", "", PontoGnss.Suporte.BRACO, 0.253, l, l))
+        PontoGnss.salvar(f, PontoGnss.Resultado.duasLeituras("PC1", "marco, muro", PontoGnss.Suporte.BRACO, 0.253, l, l))
+        PontoGnss.salvar(f, PontoGnss.Resultado.duasLeituras("PC2", "", PontoGnss.Suporte.BRACO, 0.253, l, l))
         val pts = PontoGnss.ler(f)
         assertEquals(2, pts.size)
         assertEquals("marco  muro", pts[0].descricao)                     // vírgula não quebra o CSV

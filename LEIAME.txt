@@ -1,6 +1,22 @@
-SCANNER CAMPO 0.10.2 — app Android próprio para o scanner GeoSun (GS-102G)
+SCANNER CAMPO 0.11 — app Android próprio para o scanner GeoSun (GS-102G)
 =====================================================================
 Feito a partir da leitura do FireEye 3.2.0 (protocolo do scanner). Não usa nem altera o app da GeoSun.
+
+NOVIDADES DA 0.11
+  - PONTO COM 1 LEITURA (aba GNSS > "Método do ponto"): o celular preso no scanner, apontando para o mesmo lado, dá o
+    rumo (giroscópio + acelerômetro + bússola do celular; norte da quadrícula UTM com declinação e convergência).
+      * Calibração: um ponto com "2 leituras 180°" ensina ao app o afastamento da antena (tamanho e direção em relação ao
+        celular). Erros fixos (celular torto no suporte, metal do scanner) se cancelam. Uma calibração por suporte;
+        refazer se mexer no celular, a cada dia ou se o app pedir.
+      * Depois: "1 leitura (rumo)", com o scanner virado para qualquer lado (nivelado). O ponto = antena − afastamento
+        girado pelo rumo do momento. Com ~5 cm de afastamento, 10° de erro no rumo dão < 1 cm.
+      * Trajetória: andando com RTK fixo entre os pontos, o app compara a direção do caminho com o rumo do celular; se a
+        bússola mudar desde a calibração, ele corrige (até 25°) ou pede nova calibração.
+      * O CSV ganhou as colunas Metodo e Rumo_quadricula.
+  - IMU DO SCANNER SEM LEVANTAMENTO (estudo): cartão Scanner > "Capturar a IMU (4 s, sem motor)". O programa do levantamento
+    liga a IMU por "echo 1 > /sys/class/leds/status_IMU_PWRON/brightness" e só lê a serial ttyS0 a 115200; o app faz o
+    mesmo por 4 s, com o scanner parado, e devolve a energia como estava. O resultado (hexadecimal) é para descobrir o
+    formato dos quadros; ainda não é usado no rumo.
 
 NOVIDADES DA 0.10.2
   - Confirmado no scanner (10/11/2026, dentro de casa): com o levantamento parado o GGA chega pelo auxiliar.
@@ -99,7 +115,7 @@ NOVIDADES DA 0.7
   - Mapa: trechos em atenção em laranja, perdido em vermelho.
 
 INSTALAR NO CELULAR
-  1. Mande o arquivo ScannerCampo-0.10.2.apk para o celular (cabo USB, Drive, WhatsApp).
+  1. Mande o arquivo ScannerCampo-0.11.apk para o celular (cabo USB, Drive, WhatsApp).
   2. Abra o arquivo no celular. O Android pede para permitir "instalar apps desconhecidos" para o app que
      abriu o arquivo (Arquivos, Chrome, WhatsApp…): permita e instale.
   3. O FireEye e o Scanner Campo NÃO devem ficar conectados ao scanner ao mesmo tempo: feche o FireEye antes.

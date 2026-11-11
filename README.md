@@ -24,6 +24,8 @@ levantamento (nome com data e hora; partes `_p2`, `_p3`…), pausa sozinho quand
 - `AuxiliarGnss.kt` + `assets/scanner_campo_gnss.py`, `Adb.kt` — GNSS sem levantamento: script instalado pelo adb (Wi-Fi) em
   `/tmp` do scanner, que configura o receptor (ttyS1, 460800) e serve o NMEA na porta 8081; solta a serial quando o `pos` roda.
   `Sonda.kt`, `InvestigacaoGnss.kt` — portas e investigação só de leitura do scanner.
+- `RumoCelular.kt`, `Excentricidade.kt` — rumo pelo celular preso no scanner (vetor de rotação do Android, norte da quadrícula),
+  calibração do afastamento da antena por uma leitura dupla, ponto com 1 leitura e conferência pela trajetória do GNSS.
 - `Semaforo.kt` — resumo verde/amarelo/vermelho do fim do levantamento (perdido, tremor, ambiente pobre, fechamento, GNSS × SLAM).
 - `Ntrip.kt`, `Gga.kt` — cliente NTRIP (mountpoints, correções RTCM) e leitura de GGA/GST.
 - `MainActivity.kt`, `Estilo.kt`, `VistaTopo.kt` — interface, tema e vista de cima do caminho. `Diagnostico.kt`, `Equipamento.kt` — registros.

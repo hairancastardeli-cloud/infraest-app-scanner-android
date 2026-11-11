@@ -41,6 +41,21 @@ object InvestigacaoGnss {
         "ponto de montagem e log do pos" to "ls -la /mnt/cfg/*.log* /mnt/sd/log 2>&1 | tail -15",
     )
 
+    /**
+     * IMU sem o levantamento: o "pos" liga a energia da IMU por "echo 1 > /sys/class/leds/status_IMU_PWRON/brightness" e
+     * só LÊ a ttyS0 a 115200 (não manda comando: tx 0). Aqui o mesmo, por 4 s, com o scanner PARADO, sem tocar no motor;
+     * no fim a energia volta ao que era. O formato dos quadros ainda não é conhecido: sai em hexadecimal para estudo.
+     * Não roda com o levantamento ligado (o pos usa a serial).
+     */
+    val COMANDOS_IMU: List<Pair<String, String>> = listOf(
+        "captura da IMU (4 s)" to "if pgrep -x pos > /dev/null; then echo 'levantamento rodando (pos): não mexo na IMU'; exit 0; fi; " +
+            "L=/sys/class/leds/status_IMU_PWRON/brightness; antes=\$(cat \$L 2>/dev/null); echo \"energia da IMU antes: \$antes\"; " +
+            "grep '^0:' /proc/tty/driver/serial; echo 1 > \$L; sleep 2; stty -F /dev/ttyS0 115200 raw -echo; " +
+            "timeout 4 cat /dev/ttyS0 > /tmp/imu_captura.bin; echo \"bytes em 4 s: \$(wc -c < /tmp/imu_captura.bin)\"; " +
+            "grep '^0:' /proc/tty/driver/serial; if [ \"\$antes\" = 0 ]; then echo 0 > \$L; echo 'energia devolvida a 0'; fi",
+        "primeiros 1600 bytes (hex)" to "od -A d -t x1 -v -N 1600 /tmp/imu_captura.bin",
+    )
+
     /** Roda [comandos] e devolve o relatório (cada comando com título). [progresso] recebe o título do comando em andamento. */
     fun rodar(fabrica: SocketFactory, ip: String, porta: Int = 5555, comandos: List<Pair<String, String>> = COMANDOS,
               progresso: (String) -> Unit = {}): String {

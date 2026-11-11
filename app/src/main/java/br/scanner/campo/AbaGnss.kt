@@ -42,6 +42,20 @@ class AbaGnss(
     private var leitura1: PontoGnss.Leitura? = null
     private var suporte = PontoGnss.Suporte.de(prefs.getString("gnss_suporte", null))
 
+    // rumo pelo celular preso no scanner + trajetória do GNSS (leitura única)
+    private val rumo = RumoCelular(act)
+    private val trajetoria = Trajetoria()
+    @Volatile private var fusoTrajetoria: Int? = null
+    @Volatile private var rumoPosicaoMs = 0L
+    private var metodoUnico = prefs.getBoolean("gnss_unico", false)
+    private var medindoUnico = false
+    private lateinit var tvRumo: TextView
+    private lateinit var btUnico: Button
+    private lateinit var btDuplo: Button
+
+    private fun chaveCal() = "gnss_cal_" + suporte.codigo
+    private fun calibracao(): Excentricidade.Calibracao? = Excentricidade.Calibracao.de(prefs.getString(chaveCal(), null))
+
     private lateinit var tvSituacao: TextView
     private lateinit var btLigar: Button
     private lateinit var btDesligar: Button
@@ -67,10 +81,21 @@ class AbaGnss(
 
     /** Chamado na thread do socket a cada GGA lido. */
     fun aoGga(g: Gga) {
-        ultimoGga = g; ultimoGgaMs = System.currentTimeMillis()
-        coletor?.adicionar(g)
+        val agora = System.currentTimeMillis()
+        ultimoGga = g; ultimoGgaMs = agora
+        val lat = g.lat; val lon = g.lon
+        if (lat != null && lon != null && agora - rumoPosicaoMs > 60_000) { rumo.posicao(lat, lon, g.altitude ?: 0.0); rumoPosicaoMs = agora }
+        val r = rumo.quadricula(agora)
+        coletor?.adicionar(g, agora, r)
+        if (g.qualidade == 4 && lat != null && lon != null) {
+            val u = Geodesia.utm(lat, lon, fusoTrajetoria)
+            fusoTrajetoria = u.fuso
+            trajetoria.adicionar(u.e, u.n, agora, r)
+        }
         act.runOnUiThread { tique() }
     }
+
+    fun fechar() = rumo.desligar()
 
     private fun num(c: Estilo.Campo): Double? = c.edit.text.toString().trim().replace(',', '.').toDoubleOrNull()
     private fun f(v: Double, casas: Int) = "%.${casas}f".format(v).replace('.', ',')
@@ -131,6 +156,24 @@ class AbaGnss(
         cSup.addView(blocoBastao)
         col.addView(cSup)
 
+        val cRumo = Estilo.cartao(ctx)
+        cRumo.addView(Estilo.tituloCartao(ctx, "Método do ponto"))
+        val linhaMet = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
+        btUnico = Estilo.botao(ctx, "1 leitura (rumo)", Estilo.TipoBotao.CONTORNO) { escolherMetodo(true) }
+        btDuplo = Estilo.botao(ctx, "2 leituras 180°", Estilo.TipoBotao.CONTORNO) { escolherMetodo(false) }
+        for (b in listOf(btUnico, btDuplo)) b.textSize = 14f
+        linhaMet.addView(btUnico, LinearLayout.LayoutParams(0, ctx.dp(54), 1f).apply { rightMargin = ctx.dp(8) })
+        linhaMet.addView(btDuplo, LinearLayout.LayoutParams(0, ctx.dp(54), 1f))
+        cRumo.addView(linhaMet)
+        tvRumo = Estilo.texto(ctx, "", 13f, Estilo.TEXTO_2).apply { setPadding(ctx.dp(2), ctx.dp(10), ctx.dp(2), 0) }
+        cRumo.addView(tvRumo)
+        cRumo.addView(Estilo.texto(ctx, "1 leitura: o celular preso no scanner (apontando para o mesmo lado) dá o rumo, e o app " +
+            "desconta o afastamento da antena. Calibre com uma leitura dupla (a cada dia ou se mexer no celular): o app aprende " +
+            "o afastamento sozinho. Andando com RTK fixo entre os pontos, a trajetória confere a bússola.", 12f, Estilo.TEXTO_3)
+            .apply { setPadding(ctx.dp(2), ctx.dp(8), ctx.dp(2), 0) })
+        col.addView(cRumo)
+        rumo.ligar()
+
         val cMed = Estilo.cartao(ctx)
         cMed.addView(Estilo.tituloCartao(ctx, "Medir ponto"))
         etNome = Estilo.campo(ctx, "Nome do ponto", "1", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS)
@@ -162,6 +205,7 @@ class AbaGnss(
 
         campos = listOf(etObra, etBraco, etBastao, etRosca, etNome, etDesc, etTempo)
         escolherSuporte(suporte)
+        escolherMetodo(metodoUnico)
         atualizarLista()
         etNome.edit.setText(PontoGnss.proximoNome(PontoGnss.ler(arquivo()).map { it.nome }))
         tique()
@@ -175,6 +219,33 @@ class AbaGnss(
         Estilo.aplicarTipo(act, btBastao, if (s == PontoGnss.Suporte.BASTAO) Estilo.TipoBotao.CHEIO else Estilo.TipoBotao.CONTORNO)
         blocoBraco.visibility = if (s == PontoGnss.Suporte.BRACO) View.VISIBLE else View.GONE
         blocoBastao.visibility = if (s == PontoGnss.Suporte.BASTAO) View.VISIBLE else View.GONE
+    }
+
+    private fun escolherMetodo(unico: Boolean) {
+        if (etapa != Etapa.PARADO) { toast("Termine ou cancele o ponto antes"); return }
+        metodoUnico = unico
+        prefs.edit().putBoolean("gnss_unico", unico).apply()
+        Estilo.aplicarTipo(act, btUnico, if (unico) Estilo.TipoBotao.CHEIO else Estilo.TipoBotao.CONTORNO)
+        Estilo.aplicarTipo(act, btDuplo, if (!unico) Estilo.TipoBotao.CHEIO else Estilo.TipoBotao.CONTORNO)
+        if (::tvMedicao.isInitialized) pintarMedicao()
+    }
+
+    private fun textoRumo(): String {
+        val r = rumo.quadricula()
+        val q = when (rumo.qualidade) { 3 -> "boa"; 2 -> "média"; 1 -> "fraca: faça um 8 com o celular"; else -> "não confiável: faça um 8 com o celular" }
+        val linhaRumo = if (!rumo.disponivel) "Este celular não tem os sensores de rumo."
+            else if (r.isNaN()) "Rumo: aguardando os sensores do celular…"
+            else "Rumo do scanner: ${f(r, 1)}° (quadrícula) · celular pelo ${rumo.eixo} · bússola $q"
+        val c = calibracao()
+        val linhaCal = if (c == null) "Sem calibração para o ${suporte.rotulo.lowercase()}: faça um ponto com 2 leituras 180°."
+            else "Calibração: antena a ${f(c.distancia * 100, 1)} cm, ${f(c.angulo, 0)}° do celular · coerência ${f(c.coerencia, 0)}° · " +
+                java.text.SimpleDateFormat("dd/MM HH:mm", java.util.Locale.US).format(java.util.Date(c.quandoMs)) +
+                (if (c.eixo != rumo.eixo && rumo.eixo.isNotEmpty()) "\nATENÇÃO: calibrado com o celular pelo ${c.eixo}; agora está pelo ${rumo.eixo}." else "")
+        val t = trajetoria.estimativa()
+        val linhaTraj = if (t == null) "Trajetória: ande com RTK fixo para conferir a bússola."
+            else "Trajetória × celular: ${f(t.first, 0)}° (±${f(t.second, 0)}°, ${t.third} trechos)" +
+                (c?.trajetoria?.let { " · na calibração ${f(it, 0)}°" } ?: "")
+        return "$linhaRumo\n$linhaCal\n$linhaTraj"
     }
 
     /** Altura da ponta até a antena pelo suporte escolhido, ou a mensagem do que falta preencher. */
@@ -195,6 +266,13 @@ class AbaGnss(
                 val (h, falta) = alturaAntena()
                 if (h == null) { toast(falta); return }
                 if (System.currentTimeMillis() - ultimoGgaMs > 3000) { toast("Sem posição do GNSS. Toque em Ligar o GNSS primeiro."); return }
+                if (metodoUnico) {
+                    val c = calibracao()
+                    if (c == null) { toast("Sem calibração: faça um ponto com 2 leituras 180° primeiro"); return }
+                    if (rumo.quadricula().isNaN()) { toast("Sem rumo do celular"); return }
+                    if (c.eixo != rumo.eixo) { toast("O celular está em outra posição que na calibração: calibre de novo (2 leituras)"); return }
+                }
+                medindoUnico = metodoUnico
                 prefs.edit().putString("gnss_braco", etBraco.edit.text.toString().trim()).putString("gnss_bastao", etBastao.edit.text.toString().trim())
                     .putString("gnss_rosca", etRosca.edit.text.toString().trim()).putInt("gnss_tempo", tempo())
                     .putString("gnss_obra", etObra.edit.text.toString().trim()).apply()
@@ -241,6 +319,7 @@ class AbaGnss(
                 tvSituacao.setTextColor(when (g.qualidade) { 4 -> Estilo.OK; 5 -> Estilo.ATENCAO; else -> Estilo.ERRO })
             }
         }
+        tvRumo.text = textoRumo()
         val c = coletor
         if ((etapa == Etapa.LEITURA1 || etapa == Etapa.LEITURA2) && c != null) {
             if (c.completo(agora)) { terminarLeitura(c); return }
@@ -260,15 +339,45 @@ class AbaGnss(
         val l = c.leitura() ?: return
         coletor = null
         apito(1)
-        if (etapa == Etapa.LEITURA1) {
+        val nome = etNome.edit.text.toString().trim().ifEmpty { "1" }
+        val desc = etDesc.edit.text.toString().trim()
+        val (h, _) = alturaAntena()
+        if (etapa == Etapa.LEITURA1 && medindoUnico) {
+            etapa = Etapa.PARADO; pintarMedicao()
+            leituraUnica(nome, desc, h ?: 0.0, l)
+        } else if (etapa == Etapa.LEITURA1) {
             leitura1 = l; etapa = Etapa.GIRAR; pintarMedicao()
         } else {
             etapa = Etapa.PARADO; pintarMedicao()
             val l1 = leitura1 ?: return
-            val (h, _) = alturaAntena()
-            mostrarResultado(PontoGnss.Resultado(etNome.edit.text.toString().trim().ifEmpty { "1" }, etDesc.edit.text.toString().trim(),
-                suporte, h ?: 0.0, l1, l))
+            val r = PontoGnss.Resultado.duasLeituras(nome, desc, suporte, h ?: 0.0, l1, l)
+            mostrarResultado(r, Excentricidade.calibrar(l1, l, rumo.eixo, trajetoria.estimativa()?.first))
         }
+    }
+
+    /**
+     * Ponto com uma leitura: rumo médio do celular na leitura, corrigido pela trajetória quando ela mostra que a bússola
+     * mudou desde a calibração (diferença trajetória − celular estável, ≥ 5 trechos).
+     */
+    private fun leituraUnica(nome: String, desc: String, h: Double, l: PontoGnss.Leitura) {
+        val c = calibracao() ?: return
+        var rumoUsado = l.rumo ?: run { toast("Faltou o rumo do celular durante a leitura: meça de novo"); apito(3); return }
+        val extras = ArrayList<String>()
+        if (l.sdRumo > 5) extras.add("o rumo oscilou ${f(l.sdRumo, 0)}° durante a leitura (scanner girando ou bússola instável)")
+        if (c.coerencia > 15) extras.add("a calibração tem coerência ruim (${f(c.coerencia, 0)}°): refaça com 2 leituras")
+        val t = trajetoria.estimativa()
+        val cTraj = c.trajetoria
+        if (t != null && cTraj != null && t.second < 10) {
+            val delta = RumoCelular.diferenca(t.first, cTraj)
+            when {
+                kotlin.math.abs(delta) > 25 -> extras.add("a bússola mudou ${f(delta, 0)}° desde a calibração (pela trajetória): calibre de novo com 2 leituras")
+                kotlin.math.abs(delta) > 3 -> { rumoUsado = RumoCelular.normalizar(rumoUsado + delta); extras.add("rumo corrigido pela trajetória em ${f(delta, 0)}° (informativo)") }
+            }
+        }
+        // erro de rumo de ~10° com o afastamento calibrado: só para mostrar a ordem de grandeza
+        val erroCm = c.distancia * Math.sin(Math.toRadians(10.0)) * 100
+        if (erroCm > 2) extras.add("afastamento grande (${f(c.distancia * 100, 0)} cm): cada 10° de erro no rumo = ${f(erroCm, 1)} cm")
+        mostrarResultado(PontoGnss.Resultado.leituraUnica(nome, desc, suporte, h, l, c, rumoUsado, extras), null)
     }
 
     private fun pintarMedicao() {
@@ -276,8 +385,10 @@ class AbaGnss(
         btCancelar.visibility = if (etapa == Etapa.PARADO) View.GONE else View.VISIBLE
         when (etapa) {
             Etapa.PARADO -> {
-                tvMedicao.text = "Ponta no ponto, scanner nivelado e parado: toque em Medir leitura 1."
-                btMedir.text = "Medir leitura 1"; btMedir.isEnabled = true; Estilo.aplicarTipo(act, btMedir, Estilo.TipoBotao.SUCESSO)
+                tvMedicao.text = if (metodoUnico) "Ponta no ponto, scanner nivelado e parado (para qualquer lado): toque em Medir."
+                    else "Ponta no ponto, scanner nivelado e parado: toque em Medir leitura 1."
+                btMedir.text = if (metodoUnico) "Medir (1 leitura)" else "Medir leitura 1"
+                btMedir.isEnabled = true; Estilo.aplicarTipo(act, btMedir, Estilo.TipoBotao.SUCESSO)
             }
             Etapa.LEITURA1, Etapa.LEITURA2 -> {
                 val k = if (etapa == Etapa.LEITURA1) 1 else 2
@@ -294,20 +405,30 @@ class AbaGnss(
         }
     }
 
-    private fun mostrarResultado(r: PontoGnss.Resultado) {
+    /** [cal]: calibração do rumo tirada desta leitura dupla (gravada junto com o ponto, se a coerência for boa). */
+    private fun mostrarResultado(r: PontoGnss.Resultado, cal: Excentricidade.Calibracao?) {
         val av = r.avisos()
+        val calOk = cal != null && cal.coerencia <= 20
         val msg = buildString {
             append("E ${f(r.e, 3)}\nN ${f(r.n, 3)}\nCota ${f(r.altitude, 3)} (geoide do receptor)\n")
             append("h elipsoidal ${f(r.hElip, 3)}   ·   fuso ${r.l1.fuso}${if (r.l1.sul) "S" else "N"}\n\n")
+            append("Método: ${r.metodo}" + (r.rumo?.let { " · rumo ${f(it, 1)}°" } ?: "") + "\n")
             append("Oscilação: H ${f(r.sdHz * 100, 1)} cm · V ${f(r.sdV * 100, 1)} cm · ${r.epocas} épocas ${if (r.soFixo) "(fixo)" else "(com flutuante)"}\n")
-            append("Afastamento da antena: ${f(r.afastamento * 100, 1)} cm · diferença de altura entre leituras: ${f(r.difVertical * 100, 1)} cm\n")
+            if (r.l2 != null) append("Afastamento da antena: ${f(r.afastamento * 100, 1)} cm · diferença de altura entre leituras: ${f(r.difVertical * 100, 1)} cm\n")
+            else append("Afastamento descontado: ${f(r.afastamento * 100, 1)} cm\n")
             append("Suporte: ${r.suporte.rotulo}, ponta → antena ${f(r.alturaAntena, 3)} m")
+            if (cal != null) append("\n\nCalibração do rumo: antena a ${f(cal.distancia * 100, 1)} cm, ${f(cal.angulo, 0)}° do celular, " +
+                "coerência ${f(cal.coerencia, 0)}° " + if (calOk) "(será gravada ao salvar)" else "(RUIM: não será usada)")
+            else if (r.l2 != null) append("\n\nSem rumo do celular nesta leitura: a calibração não foi atualizada.")
             if (av.isNotEmpty()) append("\n\nATENÇÃO:\n" + av.joinToString("\n") { "• $it" })
         }
         AlertDialog.Builder(act, android.R.style.Theme_Material_Dialog_Alert)
             .setTitle("Ponto ${r.nome}" + if (av.isEmpty()) "" else " (confira)")
             .setMessage(msg)
-            .setPositiveButton("Salvar") { _, _ -> salvar(r) }
+            .setPositiveButton("Salvar") { _, _ ->
+                salvar(r)
+                if (calOk && cal != null) prefs.edit().putString(chaveCal(), cal.texto()).apply()
+            }
             .setNegativeButton("Descartar", null)
             .setCancelable(false).show()
         if (av.isNotEmpty()) apito(2)

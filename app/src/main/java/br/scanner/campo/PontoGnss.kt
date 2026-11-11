@@ -33,7 +33,8 @@ object PontoGnss {
     const val ALTURA_BRACO = 0.253
 
     /** Uma época do GGA já em UTM. [h] = altura elipsoidal da antena; [alt] = altitude do GGA (geoide do receptor). */
-    data class Epoca(val e: Double, val n: Double, val h: Double, val alt: Double, val qualidade: Int, val satelites: Int)
+    data class Epoca(val e: Double, val n: Double, val h: Double, val alt: Double, val qualidade: Int, val satelites: Int,
+                     val rumo: Double = Double.NaN)       // rumo da quadrícula do celular (graus) na época; NaN sem bússola
 
     class Leitura(val epocas: List<Epoca>, val fuso: Int, val sul: Boolean) {
         val e = epocas.map { it.e }.average()
@@ -43,6 +44,10 @@ object PontoGnss {
         val sdHz = hypot(dp(epocas.map { it.e }), dp(epocas.map { it.n }))
         val sdV = dp(epocas.map { it.h })
         val soFixo = epocas.all { it.qualidade == 4 }
+        private val rumos = epocas.map { it.rumo }.filter { !it.isNaN() }
+        /** Rumo médio do celular na leitura (null se faltou em mais de metade das épocas) e o quanto oscilou. */
+        val rumo: Double? = if (rumos.size * 2 >= epocas.size && rumos.isNotEmpty()) RumoCelular.media(rumos).first else null
+        val sdRumo: Double = if (rumos.isEmpty()) Double.NaN else RumoCelular.media(rumos).second
 
         private fun dp(v: List<Double>): Double {
             if (v.size < 2) return 0.0
@@ -70,7 +75,7 @@ object PontoGnss {
 
         val aceitas: Int @Synchronized get() = epocas.size
 
-        @Synchronized fun adicionar(g: Gga, agoraMs: Long = System.currentTimeMillis()): Boolean {
+        @Synchronized fun adicionar(g: Gga, agoraMs: Long = System.currentTimeMillis(), rumo: Double = Double.NaN): Boolean {
             val lat = g.lat ?: return false
             val lon = g.lon ?: return false
             val alt = g.altitude ?: return false
@@ -79,7 +84,7 @@ object PontoGnss {
             if (!(g.qualidade == 4 || (aceitarFlutuante && g.qualidade == 5))) { rejeitadas++; return false }
             val u = Geodesia.utm(lat, lon, fuso)
             fuso = u.fuso; sul = u.sul
-            epocas.add(Epoca(u.e, u.n, g.alturaElipsoidal ?: alt, alt, g.qualidade, g.satelites))
+            epocas.add(Epoca(u.e, u.n, g.alturaElipsoidal ?: alt, alt, g.qualidade, g.satelites, rumo))
             if (primeiraMs == 0L) primeiraMs = agoraMs
             ultimaAceitaMs = agoraMs
             return true
@@ -93,30 +98,49 @@ object PontoGnss {
         fun fusoAtual(): Int? = fuso
     }
 
-    class Resultado(
+    /**
+     * Ponto calculado. Duas formas: [duasLeituras] (a 2ª com o scanner girado 180°: a média cancela o afastamento) ou
+     * [leituraUnica] (afastamento calibrado girado pelo rumo do celular, ver [Excentricidade]).
+     */
+    class Resultado private constructor(
         val nome: String, val descricao: String, val suporte: Suporte, val alturaAntena: Double,
-        val l1: Leitura, val l2: Leitura, val quando: Date = Date(),
+        val l1: Leitura, val l2: Leitura?, val e: Double, val n: Double, val afastamento: Double,
+        val rumo: Double?, val metodo: String, private val extras: List<String>, val quando: Date,
     ) {
-        val e = (l1.e + l2.e) / 2
-        val n = (l1.n + l2.n) / 2
-        val hElip = (l1.h + l2.h) / 2 - alturaAntena
-        val altitude = (l1.alt + l2.alt) / 2 - alturaAntena
-        val afastamento = hypot(l1.e - l2.e, l1.n - l2.n) / 2
-        val difVertical = l2.h - l1.h
-        val sdHz = maxOf(l1.sdHz, l2.sdHz)
-        val sdV = maxOf(l1.sdV, l2.sdV)
-        val soFixo = l1.soFixo && l2.soFixo
-        val epocas = l1.epocas.size + l2.epocas.size
+        val hElip = (if (l2 != null) (l1.h + l2.h) / 2 else l1.h) - alturaAntena
+        val altitude = (if (l2 != null) (l1.alt + l2.alt) / 2 else l1.alt) - alturaAntena
+        val difVertical = if (l2 != null) l2.h - l1.h else 0.0
+        val sdHz = maxOf(l1.sdHz, l2?.sdHz ?: 0.0)
+        val sdV = maxOf(l1.sdV, l2?.sdV ?: 0.0)
+        val soFixo = l1.soFixo && (l2?.soFixo ?: true)
+        val epocas = l1.epocas.size + (l2?.epocas?.size ?: 0)
 
         fun avisos(): List<String> {
             val a = ArrayList<String>()
             if (!soFixo) a.add("teve época em RTK FLUTUANTE: precisão bem pior que a do fixo")
             if (sdHz > 0.02) a.add("posição oscilou %.1f cm durante a leitura (antena parada?)".format(sdHz * 100))
             if (sdV > 0.03) a.add("altura oscilou %.1f cm durante a leitura".format(sdV * 100))
-            if (afastamento > 0.70) a.add("as leituras estão a %.0f cm uma da outra: mais do que o afastamento da antena. A ponta saiu do ponto?".format(afastamento * 200))
-            if (afastamento < 0.05) a.add("as duas leituras quase coincidem: o scanner foi girado 180°?")
-            if (abs(difVertical) > 0.05) a.add("as leituras diferem %.1f cm na altura: o scanner não estava nivelado igual nas duas".format(abs(difVertical) * 100))
+            if (l2 != null) {
+                if (afastamento > 0.70) a.add("as leituras estão a %.0f cm uma da outra: mais do que o afastamento da antena. A ponta saiu do ponto?".format(afastamento * 200))
+                if (afastamento < 0.02) a.add("as duas leituras quase coincidem: o scanner foi girado 180°?")
+                if (abs(difVertical) > 0.05) a.add("as leituras diferem %.1f cm na altura: o scanner não estava nivelado igual nas duas".format(abs(difVertical) * 100))
+            }
+            a.addAll(extras)
             return a
+        }
+
+        companion object {
+            fun duasLeituras(nome: String, descricao: String, suporte: Suporte, alturaAntena: Double, l1: Leitura, l2: Leitura,
+                             quando: Date = Date()) = Resultado(nome, descricao, suporte, alturaAntena, l1, l2,
+                (l1.e + l2.e) / 2, (l1.n + l2.n) / 2, hypot(l1.e - l2.e, l1.n - l2.n) / 2, null, "2 leituras 180°", emptyList(), quando)
+
+            /** [rumo] = rumo da quadrícula usado (já corrigido pela trajetória, se for o caso); [extras] = avisos do rumo. */
+            fun leituraUnica(nome: String, descricao: String, suporte: Suporte, alturaAntena: Double, l1: Leitura,
+                             cal: Excentricidade.Calibracao, rumo: Double, extras: List<String>, quando: Date = Date()): Resultado {
+                val (e, n) = Excentricidade.ponta(l1.e, l1.n, rumo, cal)
+                return Resultado(nome, descricao, suporte, alturaAntena, l1, null, e, n, cal.distancia, rumo,
+                    "1 leitura + rumo", extras, quando)
+            }
         }
     }
 
@@ -127,7 +151,7 @@ object PontoGnss {
      * a altura elipsoidal vai em coluna própria. O nome do arquivo não pode ter "_gnss" (o Gerador ignora esses).
      */
     val CABECALHO = "Name,Easting,Northing,Elevation,Feature code,Solution State,Zone,h_elipsoidal,Suporte,Altura_antena," +
-        "SdHz,SdV,Epocas,Afastamento,DifV_leituras,Data"
+        "SdHz,SdV,Epocas,Afastamento,DifV_leituras,Data,Metodo,Rumo_quadricula"
 
     class Linha(val nome: String, val e: Double, val n: Double, val elev: Double, val descricao: String, val estado: String,
                 val zona: String, val hElip: Double, val texto: String)
@@ -141,9 +165,10 @@ object PontoGnss {
     fun linhaCsv(r: Resultado): String {
         val zona = "${r.l1.fuso}${if (r.l1.sul) "S" else "N"}"
         val data = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(r.quando)
-        return String.format(Locale.US, "%s,%.4f,%.4f,%.4f,%s,%s,%s,%.4f,%s,%.3f,%.4f,%.4f,%d,%.3f,%.3f,%s",
+        return String.format(Locale.US, "%s,%.4f,%.4f,%.4f,%s,%s,%s,%.4f,%s,%.3f,%.4f,%.4f,%d,%.3f,%.3f,%s,%s,%s",
             campo(r.nome), r.e, r.n, r.altitude, campo(r.descricao), if (r.soFixo) "FIXED" else "FLOAT", zona, r.hElip,
-            r.suporte.codigo, r.alturaAntena, r.sdHz, r.sdV, r.epocas, r.afastamento, r.difVertical, data)
+            r.suporte.codigo, r.alturaAntena, r.sdHz, r.sdV, r.epocas, r.afastamento, r.difVertical, data, r.metodo,
+            r.rumo?.let { String.format(Locale.US, "%.1f", it) } ?: "")
     }
 
     fun salvar(f: File, r: Resultado) {
