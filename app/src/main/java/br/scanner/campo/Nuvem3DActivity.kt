@@ -59,15 +59,29 @@ class Nuvem3DActivity : Activity() {
             setBackgroundColor(Estilo.comAlfa(Estilo.FUNDO, 200))
         }
         fun bt(t: String, f: () -> Unit) = Estilo.botao(this, t, Estilo.TipoBotao.CONTORNO, f).also {
+            it.textSize = 14f; it.isSingleLine = true; it.minHeight = 0; it.minWidth = 0; it.setPadding(dp(2), 0, dp(2), 0)
+            it.setAutoSizeTextTypeUniformWithConfiguration(10, 14, 1, android.util.TypedValue.COMPLEX_UNIT_SP)
             barra.addView(it, LinearLayout.LayoutParams(0, dp(48), 1f).apply { rightMargin = dp(6) })
         }
         bt("Inicial") { vista.vistaInicial() }
-        bt("De cima") { vista.vistaTopo() }
-        bt("Ponto +") { vista.tamanhoPonto = (vista.tamanhoPonto + 1f).coerceAtMost(8f) }
-        bt("Ponto −") { vista.tamanhoPonto = (vista.tamanhoPonto - 1f).coerceAtLeast(1f) }
+        bt("Topo") { vista.vistaTopo() }
+        bt("Ponto+") { vista.tamanhoPonto = (vista.tamanhoPonto + 1f).coerceAtMost(8f) }
+        bt("Ponto−") { vista.tamanhoPonto = (vista.tamanhoPonto - 1f).coerceAtLeast(1f) }
         bt("Fechar") { finish() }
         raiz.addView(barra, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))
         setContentView(raiz)
+        // Android 15 desenha por baixo das barras do sistema: o título desce abaixo do relógio e os botões sobem acima da
+        // barra de navegação (a nuvem continua ocupando a tela toda)
+        if (android.os.Build.VERSION.SDK_INT >= 30) {
+            window.setDecorFitsSystemWindows(false)
+            raiz.setOnApplyWindowInsetsListener { _, ins ->
+                val s = ins.getInsets(android.view.WindowInsets.Type.systemBars() or android.view.WindowInsets.Type.displayCutout())
+                topo.setPadding(dp(14) + s.left, dp(10) + s.top, dp(14) + s.right, dp(8))
+                barra.setPadding(dp(10) + s.left, dp(8), dp(10) + s.right, dp(12) + s.bottom)
+                ins
+            }
+            raiz.requestApplyInsets()
+        }
 
         if (aoVivo) atualizarAoVivo()
         else trabalho.execute {
